@@ -79,6 +79,7 @@ it.each([
   ["artifact"],
   ["coordinates"],
   ["producer", "REDACTED", "…"],
+  ["producer", "[", "]"],
 ])(
   "excludes declared literals from all authored limitations: %j",
   async (...literals) => {
@@ -105,9 +106,9 @@ it.each([
       result.value.limitations,
       projected.limitations,
       ...projected.records.map((record) => record.limitations),
-    ];
+    ].flat();
     for (const literal of literals)
-      expect(JSON.stringify(texts)).not.toContain(literal);
+      expect(texts.every((text) => !text.includes(literal))).toBe(true);
     expect(result.value.subject?.digest.sha256).toBe(report.artifact.sha256);
     expect(projected.decoder).toEqual(report.decoder);
     expect(projected.records[0]?.reported).toEqual(first.reported);

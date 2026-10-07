@@ -677,14 +677,14 @@ async function inspect(mode, input, errorCategory) {
 
 function assertSensitiveLimitations(evidence, literals) {
   const result = evidence.normalized_result;
-  const text = JSON.stringify([
+  const texts = [
     evidence.limitations,
     result.limitations,
     ...result.records.map((record) => record.limitations),
-  ]);
+  ].flat();
   for (const literal of literals)
     assert.ok(
-      !text.includes(literal),
+      texts.every((text) => !text.includes(literal)),
       "Declared literal retained in authored limitations",
     );
 }
