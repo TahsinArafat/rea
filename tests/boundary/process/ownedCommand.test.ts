@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { expect, it } from "vitest";
 import { runOwnedCommand } from "../../../src/process/OwnedCommand.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
+import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
 
 const command = (script: string) => ({
@@ -57,6 +58,30 @@ it("returns a timeout for a running process after independent cleanup", async ()
       diagnosticBytes: 1024,
     }),
   ).rejects.toMatchObject({ reason: "timeout", cleanupFailure: null });
+});
+
+it("honors cancellation during cleanup after a successful command", async () => {
+  const controller = new AbortController();
+  await expect(
+    runOwnedCommand(
+      command("process.exit(0)"),
+      { timeoutMs: 2_000, diagnosticBytes: 1024 },
+      {
+        signal: controller.signal,
+        launcher: async (input) => {
+          const launched = await spawnOwnedProviderProcess(input);
+          return {
+            ...launched,
+            cleanup: async () => {
+              const result = await cleanupOwnedProcessGroup(launched.ownership);
+              controller.abort();
+              return result;
+            },
+          };
+        },
+      },
+    ),
+  ).rejects.toMatchObject({ reason: "cancelled", cleanupFailure: null });
 });
 
 it("rejects oversized diagnostics even when the child exits immediately", async () => {

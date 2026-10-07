@@ -52,6 +52,35 @@ it("keeps unsafe extension numeric lexemes and rejects unsafe mandatory schema n
   ).toThrow("HAR schema validation failed");
 });
 
+it.each(["container", "record"] as const)(
+  "retains %s extension content without interpreting it as an HTTP body",
+  (location) => {
+    const fixture = historicalHar();
+    const extension = {
+      response: { content: { encoding: "base64", text: "opaque extension" } },
+    };
+    const input =
+      location === "container"
+        ? { ...fixture, _extension: extension }
+        : {
+            log: {
+              ...fixture.log,
+              entries: fixture.log.entries.map((entry) => ({
+                ...entry,
+                _extension: extension,
+              })),
+            },
+          };
+    const result = decodeHarCapture(JSON.stringify(input), []);
+    expect(
+      location === "container"
+        ? result.container.reported
+        : result.records[0]?.reported,
+    ).toMatchObject({ _extension: extension });
+    expect(result.records[0]?.binary_fields).toEqual([]);
+  },
+);
+
 it("retains valid base64 bytes independently of declared sizes", () => {
   const fixture = historicalHar();
   const entry = fixture.log.entries[0];

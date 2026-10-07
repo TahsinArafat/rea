@@ -36,7 +36,13 @@ const client = new Client({
   name: "historical-web-capture-verifier",
   version: "1",
 });
-let connected = false;
+const transport = new StdioClientTransport({
+  command: process.execPath,
+  args: [entrypoint, "mcp"],
+  env: environment,
+  stderr: "pipe",
+});
+const failures = [];
 let cases = 0;
 try {
   await runOwnedCommand(
@@ -60,14 +66,7 @@ try {
     },
     { timeoutMs: 30_000, diagnosticBytes: 1024 * 1024 },
   );
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [entrypoint, "mcp"],
-    env: environment,
-    stderr: "pipe",
-  });
   await client.connect(transport);
-  connected = true;
   for (const format of ["har", "mitmproxy"]) {
     const path = join(
       runtime.path,
@@ -202,9 +201,40 @@ try {
       cases++;
     }
   }
+} catch (cause) {
+  failures.push(cause);
 } finally {
-  if (connected) await client.close();
-  await runtime.close();
+  for (const cleanup of [
+    () => client.close(),
+    () => transport.close(),
+    () => runtime.close(),
+  ]) {
+    try {
+      await cleanup();
+    } catch (cause) {
+      failures.push(cause);
+    }
+  }
+}
+const verifier = await completeVerifierRun(run);
+try {
+  assert.equal(verifier.process_lineage.status, "verified");
+  assert.deepEqual(verifier.process_lineage.descendants, []);
+} catch (cause) {
+  failures.push(cause);
+}
+if (failures.length > 0) {
+  console.error(
+    JSON.stringify(
+      { status: "failed", public_cases: cases, verifier },
+      null,
+      2,
+    ),
+  );
+  throw new AggregateError(
+    failures,
+    "Historical capture verification failed; analysis and cleanup failures are retained.",
+  );
 }
 console.log(
   JSON.stringify(
@@ -213,7 +243,7 @@ console.log(
       public_cases: cases,
       upstream: "mitmproxy 12.2.3 FlowWriter + SaveHar",
       offline: true,
-      verifier: await completeVerifierRun(run),
+      verifier,
     },
     null,
     2,

@@ -124,7 +124,7 @@ const projectHar = (
     if (typeof item === "string") {
       if (
         redact &&
-        pointer.endsWith("/response/content/text") &&
+        pointer === "/response/content/text" &&
         parent?.encoding === "base64"
       ) {
         const bytes = decodeHarBase64(item, pointer);

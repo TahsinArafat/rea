@@ -139,5 +139,7 @@ export const runOwnedCommand = async (
       ],
     );
   if (failure !== undefined) throw failure;
+  if (options.signal?.aborted)
+    throw new OwnedCommandFailure("cancelled", "Command cancelled.", snapshot);
   return snapshot;
 };
