@@ -39,6 +39,9 @@ class Generator:
         har["log"]["entries"][0]["_markers"] = markers
         har["log"]["entries"][0]["_private_properties"] = {"private-property/~": {"number": 123, "text": "private-property"}, "kept": 7}
         (root / "producer.har").write_text(json.dumps(har))
+        invalid_har = json.loads(json.dumps(har))
+        invalid_har["log"]["entries"][0]["response"]["content"].update({"encoding": "base64", "text": "AR=="})
+        (root / "invalid-private-parent.har").write_text(json.dumps(invalid_har))
         strings = first.get_state()
         for state in [strings, strings["backup"]]:
             state["request"]["path"] = "https://native-user:string-password@example.test/string-path"

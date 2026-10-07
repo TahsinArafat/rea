@@ -178,6 +178,13 @@ const projectHar = (
             redact &&
             sensitiveValues.some((literal) => key.includes(literal))
           ) {
+            const beforeNumbers = numeric_literals.length;
+            const beforeBinaries = binary_fields.length;
+            const beforeRedactions = redactor.redactions.length;
+            visit(child, capturePointer(pointer, key), depth + 1, item);
+            numeric_literals.splice(beforeNumbers);
+            binary_fields.splice(beforeBinaries);
+            redactor.redactions.splice(beforeRedactions);
             redactor.redactions.push({
               pointer,
               reason: "explicit-sensitive-value",

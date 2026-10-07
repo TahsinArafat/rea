@@ -88,7 +88,7 @@ reintroducing declared literals. The file digest still
 identifies the original artifact. A sensitive property name excludes that
 entire property and its sidecars; a `scope: "property-name"` redaction points
 to its actual parent. No substitute property name or child pointer is invented.
-Omitted native subtrees are still validated. Explicitly sensitive artifact
+Omitted subtrees are still validated, including canonical HAR base64. Explicitly sensitive artifact
 paths are empty in Evidence and omitted from locations, while the original
 SHA-256 and size remain available. Failure messages, diagnostics and cleanup
 resources follow the same explicit declarations without changing error types;

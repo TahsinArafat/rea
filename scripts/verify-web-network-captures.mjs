@@ -271,6 +271,16 @@ try {
     await inspect(
       mode,
       {
+        capture_path: join(runtime.path, "invalid-private-parent.har"),
+        format: "har",
+        sensitive_values: ["response"],
+      },
+      "invalid_input",
+    );
+    cases++;
+    await inspect(
+      mode,
+      {
         capture_path: join(runtime.path, "private-property-absent.har"),
         format: "har",
         sensitive_values: ["private-property", "REDACTED"],

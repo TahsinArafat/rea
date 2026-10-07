@@ -2,6 +2,37 @@ import { expect, it } from "vitest";
 import { historicalHar } from "../../../tests/fixtures/historicalHar.js";
 import { decodeHarCapture } from "./HarCapture.js";
 
+it.each([{ values: [] }, { values: ["response"] }, { values: ["content"] }])(
+  "validates canonical base64 even when its parent property is sensitive: %j",
+  ({ values }) => {
+    const fixture = historicalHar();
+    const first = fixture.log.entries[0];
+    if (first === undefined) throw new Error("fixture missing");
+    const input = {
+      log: {
+        ...fixture.log,
+        entries: [
+          {
+            ...first,
+            response: {
+              ...first.response,
+              content: {
+                size: 1,
+                mimeType: "application/octet-stream",
+                encoding: "base64",
+                text: "AR==",
+              },
+            },
+          },
+        ],
+      },
+    };
+    expect(() => decodeHarCapture(JSON.stringify(input), values)).toThrow(
+      "not valid canonical base64",
+    );
+  },
+);
+
 it("excludes sensitive property identities before emitting keys and sidecar coordinates", () => {
   const fixture = historicalHar();
   const first = fixture.log.entries[0];
