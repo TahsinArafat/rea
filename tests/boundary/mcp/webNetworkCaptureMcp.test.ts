@@ -78,4 +78,14 @@ it("publishes valid SDK schemas and retains historical inline Evidence with the 
     arguments: { ...args, capture_path: "relative.har" },
   });
   expect(invalid.isError).toBe(true);
+  const invalidSensitive = await client.callTool({
+    name: "inspect_web_network_capture",
+    arguments: { ...args, sensitive_values: ["secret"], mysecret: true },
+  });
+  expect(invalidSensitive.isError).toBe(true);
+  expect(invalidSensitive.structuredContent).toMatchObject({
+    error: { code: "invalid_request", details: { issues: [{ path: [] }] } },
+  });
+  expect(JSON.stringify(invalidSensitive)).not.toContain("secret");
+  expect(ajv.validate(inputSchema, { ...args, mysecret: true })).toBe(false);
 });

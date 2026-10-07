@@ -138,3 +138,5 @@ returns `code: "artifact_changed"`, `category: "integrity_mismatch"` and
 the capture file is stable before retrying. No unstable snapshot is decoded.
 Command cleanup failures retain the original status and both diagnostic streams;
 the decoder's ownership preparation receives the same cancellation signal.
+
+MCP advertises the same strict named input contract used by the application. Historical inspection delegates argument validation to that shared application boundary so accepted explicit-sensitive declarations also cover invalid argument names and other correction details. The SDK receives raw arguments through its Standard Schema interface; malformed inputs still fail before decoder or filesystem effects and return the normal structured REA error. Protocol-envelope validation remains owned by MCP.
