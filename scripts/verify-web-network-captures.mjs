@@ -459,6 +459,23 @@ try {
   );
   cases++;
   const privatePath = join(runtime.path, "REDACTED.har");
+  await inspect(
+    "mcp",
+    {
+      capture_path: join(runtime.path, "producer.har"),
+      format: "har",
+      sensitive_values: ["secret"],
+      mysecret: true,
+    },
+    "invalid_input",
+  );
+  cases++;
+  await inspect("mcp", {
+    capture_path: join(runtime.path, "flows.mitm"),
+    format: "mitmproxy",
+    sensitive_values: ["\ud800", "ordinary-scalar"],
+  });
+  cases++;
   const oversizedPath = join(runtime.path, "oversized-capture");
   await writeFile(oversizedPath, "");
   await truncate(oversizedPath, WEB_NETWORK_CAPTURE_LIMITS.inputBytes + 1);

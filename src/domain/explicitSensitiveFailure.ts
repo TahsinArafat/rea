@@ -38,6 +38,22 @@ export const redactExplicitFailure = (
 ): AnalysisError => {
   if (values.length === 0) return error;
   const text = (value: string): string => redactExplicitText(value, values);
+  const path = (parts: readonly (string | number)[]): (string | number)[] => {
+    const retained: (string | number)[] = [];
+    for (const part of parts) {
+      if (typeof part !== "string") {
+        retained.push(part);
+      } else if (part.startsWith("/")) {
+        const pointer = redactExplicitPointer(part, values);
+        retained.push(pointer);
+        if (pointer !== part) break;
+      } else {
+        if (values.some((literal) => part.includes(literal))) break;
+        retained.push(part);
+      }
+    }
+    return retained;
+  };
   const diagnostics = (
     value: Readonly<Record<string, JsonValue>>,
   ): Record<string, JsonValue> =>
@@ -72,11 +88,7 @@ export const redactExplicitFailure = (
       { cause: error },
       error.issues.map((issue) => ({
         ...issue,
-        path: issue.path.map((part) =>
-          typeof part === "string" && part.startsWith("/")
-            ? redactExplicitPointer(part, values)
-            : part,
-        ),
+        path: path(issue.path),
         ...(issue.message === undefined
           ? {}
           : { message: text(issue.message) }),

@@ -93,3 +93,22 @@ it("excludes a marked permission-denied path without losing its host error code"
   });
   expect(JSON.stringify(projected)).not.toContain("declared-path-value");
 });
+
+it("coarsens ordinary sensitive issue-path segments to their real parent", () => {
+  const input = new AnalysisInputError(
+    "inspect_web_network_capture",
+    undefined,
+    [
+      {
+        path: ["input", "mysecret", "child"],
+        reason: "unknown_argument",
+        message: "Unrecognized mysecret",
+      },
+    ],
+  );
+  const result = redactExplicitFailure(input, ["secret"]);
+  if (!(result instanceof AnalysisInputError))
+    throw new Error("Input error required");
+  expect(result.issues[0]?.path).toEqual(["input"]);
+  expect(JSON.stringify(projectAnalysisError(result))).not.toContain("secret");
+});

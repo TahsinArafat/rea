@@ -43,6 +43,14 @@ class BoundedReader:
 
 def project_record(state, secrets):
     binaries, numbers, redactions = [], [], []
+    byte_secrets = []
+    for secret in secrets:
+        try:
+            byte_secrets.append(secret.encode("utf-8", errors="strict"))
+        except UnicodeEncodeError:
+            # Non-scalar JSON strings have no UTF-8 byte representation.
+            # Keep them in secrets for the ordinary string projection.
+            pass
 
     def redact(text, path, original):
         if any(secret in text or secret in original for secret in secrets):
@@ -83,7 +91,7 @@ def project_record(state, secrets):
             return None
         if isinstance(value, bytes):
             safe_bytes, credential_url = transport_value(value, path, transport_url)
-            hidden = any(secret.encode("utf-8") in value or secret.encode("utf-8") in safe_bytes for secret in secrets)
+            hidden = any(secret in value or secret in safe_bytes for secret in byte_secrets)
             safe_text = None
             try:
                 safe_text = safe_bytes.decode("utf-8", errors="strict")

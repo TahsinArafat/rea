@@ -224,6 +224,7 @@ it.each([
   { literal: "12345", input: { record_ordinals: [12345] } },
   { literal: "Each", input: { record_ordinals: [0, 0] } },
   { literal: "absolute", input: { capture_path: "relative.har" } },
+  { literal: "secret", input: { mysecret: true } },
 ])(
   "excludes declared text from application-generated input errors: $literal",
   async ({ literal, input }) => {
