@@ -7,6 +7,7 @@ import {
   assertKnownAnalysisErrorTag,
 } from "./analysisErrorPresentation.js";
 import {
+  AnalysisAccessDeniedError,
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
@@ -130,6 +131,7 @@ const STATIC_ERROR_CODES = {
   AnalysisOutputError: "unreadable_output",
   HopperProtocolError: "unreadable_output",
   AnalysisInputError: "invalid_request",
+  AnalysisAccessDeniedError: "access_denied",
   AnalysisCapabilityUnavailableError: "capability_unavailable",
   AnalysisCancelledError: "cancelled",
   HopperCancelledError: "cancelled",
@@ -177,6 +179,13 @@ const errorDetails = (
 const requestErrorDetails = (
   error: AnalysisError,
 ): Readonly<Record<string, JsonValue>> | undefined => {
+  if (error instanceof AnalysisAccessDeniedError)
+    return {
+      operation: error.operation,
+      path: error.path,
+      system_code: error.systemCode,
+      boundary: "filesystem-read",
+    };
   if (error instanceof AnalysisOutputError)
     return { operation: error.operation, reason: error.reason };
   if (error instanceof AnalysisInputError && error.issues.length > 0)
@@ -366,6 +375,7 @@ export interface AnalysisErrorProjection extends Readonly<
 > {
   readonly code:
     | "invalid_request"
+    | "access_denied"
     | "unreadable_output"
     | "capability_unavailable"
     | "provider_unavailable"

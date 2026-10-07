@@ -1,3 +1,4 @@
+import { AnalysisAccessDeniedError } from "../../domain/analysisErrorCore.js";
 import { expect, it } from "vitest";
 import {
   AnalysisInputError,
@@ -72,4 +73,23 @@ it("coarsens format issue pointers without creating replacement coordinates", ()
   if (!(result instanceof AnalysisInputError))
     throw new Error("Input error required");
   expect(result.issues[0]?.path).toEqual(["capture_path", "/metadata"]);
+});
+
+it("excludes a marked permission-denied path without losing its host error code", () => {
+  const error = redactCaptureFailure(
+    new AnalysisAccessDeniedError(
+      "inspect_web_network_capture",
+      "/declared-path-value/capture.har",
+      "EACCES",
+    ),
+    ["declared-path-value"],
+  );
+  expect(error._tag).toBe("AnalysisAccessDeniedError");
+  const projected = projectAnalysisError(error);
+  expect(projected).toMatchObject({
+    code: "access_denied",
+    category: "unavailable",
+    details: { system_code: "EACCES" },
+  });
+  expect(JSON.stringify(projected)).not.toContain("declared-path-value");
 });

@@ -50,13 +50,17 @@ def project_record(state, secrets):
             return None
         return text
 
-    def transport_text(text, path, transport_url):
+    def transport_value(value, path, transport_url):
         if not (transport_url or re.fullmatch(r"/(?:backup/)*request/(?:path|authority)", path)):
-            return text, False
-        safe_url = re.sub(r"^([ \t]*(?:[a-z][a-z0-9+.-]*:)?//)[^/?#]*@", r"\1", text, flags=re.I)
-        if path.endswith("/authority") and "@" in safe_url:
-            safe_url = safe_url.rsplit("@", 1)[1]
-        changed = safe_url != text
+            return value, False
+        binary = isinstance(value, bytes)
+        pattern = rb"^([ \t]*(?:[a-z][a-z0-9+.-]*:)?//)[^/?#]*@" if binary else r"^([ \t]*(?:[a-z][a-z0-9+.-]*:)?//)[^/?#]*@"
+        replacement = rb"\1" if binary else r"\1"
+        separator = b"@" if binary else "@"
+        safe_url = re.sub(pattern, replacement, value, flags=re.I)
+        if path.endswith("/authority") and separator in safe_url:
+            safe_url = safe_url.rsplit(separator, 1)[1]
+        changed = safe_url != value
         if changed:
             redactions.append({"pointer": path, "reason": "transport-credential"})
         return safe_url, changed
@@ -78,16 +82,13 @@ def project_record(state, secrets):
                 binaries.append({"pointer": path, "representation": "producer-bytes", "state": "redacted", "content_base64": None, "bytes": None, "sha256": None})
             return None
         if isinstance(value, bytes):
-            hidden = any(secret.encode("utf-8") in value for secret in secrets)
+            safe_bytes, credential_url = transport_value(value, path, transport_url)
+            hidden = any(secret.encode("utf-8") in value or secret.encode("utf-8") in safe_bytes for secret in secrets)
             safe_text = None
             try:
-                safe_text = value.decode("utf-8", errors="strict")
+                safe_text = safe_bytes.decode("utf-8", errors="strict")
             except UnicodeDecodeError:
                 pass
-            credential_url = False
-            if safe_text is not None:
-                safe_text, credential_url = transport_text(safe_text, path, transport_url)
-                hidden = hidden or any(secret in safe_text for secret in secrets)
             if hidden:
                 redactions.append({"pointer": path, "reason": "explicit-sensitive-value"})
             exclude = hidden or credential_url
@@ -96,7 +97,7 @@ def project_record(state, secrets):
                 return None
             return safe_text
         if isinstance(value, str):
-            safe_text, _ = transport_text(value, path, transport_url)
+            safe_text, _ = transport_value(value, path, transport_url)
             return redact(safe_text, path, value)
         if isinstance(value, bool) or value is None:
             return value

@@ -120,3 +120,9 @@ Stable regular-file reads reject symlinks, replacement and concurrent changes.
 Private snapshots, declarations and tool configuration are removed before the
 result returns. Cleanup uncertainty retains the selected capture, resource and
 original failure information. The original capture is never changed.
+
+## Excluded coordinates and read failures
+
+Explicitly marked values also exclude matching source coordinates and their sidecars. A hidden record coordinate is reported as `location.kind: "unknown"`; REA does not invent a replacement pointer. Original record ordinals and artifact digests remain available.
+
+Host filesystem read denials return `code: "access_denied"`, `category: "unavailable"`, the actual `EACCES`/`EPERM` code and read-access guidance. Missing files remain input failures. Cleanup failures retain the prior structured error, including its input constraints or provider diagnostics, with explicitly marked text excluded.

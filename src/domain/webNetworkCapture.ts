@@ -79,6 +79,10 @@ const numberSchema = z.strictObject({
 export const webNetworkCaptureRecordSchema = z.strictObject({
   ordinal: z.number().int().nonnegative(),
   location: z.discriminatedUnion("kind", [
+    z.strictObject({
+      kind: z.literal("unknown"),
+      reason: z.literal("explicit-sensitive-value"),
+    }),
     z.strictObject({ kind: z.literal("json-pointer"), pointer: pointerSchema }),
     z.strictObject({
       kind: z.literal("byte-range"),

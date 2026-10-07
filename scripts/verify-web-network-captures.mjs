@@ -5,6 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   access,
   copyFile,
+  chmod,
   readFile,
   truncate,
   writeFile,
@@ -333,6 +334,82 @@ try {
             },
           );
       }
+      cases++;
+    }
+  }
+  for (const mode of ["cli", "mcp"]) {
+    const value = await inspect(mode, {
+      capture_path: join(runtime.path, "non-utf8-urls.mitm"),
+      format: "mitmproxy",
+    });
+    const record = value.records[0];
+    assert.ok(!JSON.stringify(value).includes("byte-secret"));
+    for (const prefix of ["", "/backup"]) {
+      for (const suffix of [
+        "/request/path",
+        "/request/authority",
+        "/request/headers/0/1",
+        "/request/headers/1/1",
+        "/response/headers/0/1",
+      ]) {
+        const pointer = prefix + suffix;
+        assert.deepEqual(
+          record.binary_fields.find((field) => field.pointer === pointer),
+          {
+            pointer,
+            representation: "producer-bytes",
+            state: "redacted",
+            content_base64: null,
+            bytes: null,
+            sha256: null,
+          },
+        );
+      }
+    }
+    cases++;
+  }
+  const deniedPath = join(runtime.path, "unreadable.har");
+  await copyFile(join(runtime.path, "producer.har"), deniedPath);
+  await chmod(deniedPath, 0o000);
+  for (const mode of ["cli", "mcp"]) {
+    for (const format of ["har", "mitmproxy"]) {
+      const failure = await inspect(
+        mode,
+        { capture_path: deniedPath, format },
+        "unavailable",
+      );
+      assert.equal(failure.code, "access_denied");
+      assert.equal(failure.details.system_code, "EACCES");
+      assert.equal(failure.details.path, deniedPath);
+      cases++;
+    }
+    for (const literal of ["log", "entries"]) {
+      const value = await inspect(mode, {
+        capture_path: join(runtime.path, "producer.har"),
+        format: "har",
+        sensitive_values: [literal],
+      });
+      assert.equal(value.container.records_pointer, null);
+      assert.ok(
+        value.records.every(
+          (record) =>
+            record.location.kind === "unknown" &&
+            record.location.reason === "explicit-sensitive-value",
+        ),
+      );
+      assert.ok(!JSON.stringify(value).includes(literal));
+      cases++;
+    }
+    for (const format of ["har", "mitmproxy"]) {
+      const value = await inspect(mode, {
+        capture_path: join(
+          runtime.path,
+          format === "har" ? "producer.har" : "string-urls.mitm",
+        ),
+        format,
+        sensitive_values: ["~1"],
+      });
+      assert.ok(!JSON.stringify(value).includes("~1"));
       cases++;
     }
   }

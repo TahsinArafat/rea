@@ -1,3 +1,4 @@
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type { HistoricalCaptureFormatAdapter } from "./HistoricalCaptureFormatAdapter.js";
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
@@ -8,6 +9,7 @@ import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
+  AnalysisAccessDeniedError,
   AnalysisCapabilityUnavailableError,
   AnalysisCancelledError,
   AnalysisInputError,
@@ -59,6 +61,9 @@ export class HistoricalCaptureDecoder {
   constructor(
     readonly adapters: readonly HistoricalCaptureFormatAdapter[],
     readonly environment: Readonly<NodeJS.ProcessEnv>,
+    readonly createRuntime: () => Promise<
+      Pick<PrivateRuntimeRoot, "path" | "close">
+    > = () => PrivateRuntimeRoot.create({ prefix: "rea-web-capture-" }),
   ) {}
 
   /** Snapshot the selected artifact, decode it offline, and release private credentials and processes. */
@@ -66,7 +71,7 @@ export class HistoricalCaptureDecoder {
     input: InspectWebNetworkCaptureInput,
     options?: ExecutionOptions,
   ): Promise<Result<WebNetworkCapture, AnalysisError>> {
-    let runtime: PrivateRuntimeRoot | undefined;
+    let runtime: Pick<PrivateRuntimeRoot, "path" | "close"> | undefined;
     let result: Result<WebNetworkCapture, AnalysisError>;
     let phase: "capture-read" | "decoder" = "capture-read";
     try {
@@ -85,7 +90,7 @@ export class HistoricalCaptureDecoder {
         options?.signal,
       );
       phase = "decoder";
-      runtime = await PrivateRuntimeRoot.create({ prefix: "rea-web-capture-" });
+      runtime = await this.createRuntime();
       const snapshotPath = join(runtime.path, "capture.snapshot");
       const requestPath = join(runtime.path, "request.json");
       const replyPath = join(runtime.path, "reply.json");
@@ -219,7 +224,9 @@ export class HistoricalCaptureDecoder {
               [runtime.path],
               {
                 capture_path: input.capture_path,
-                previous_error: result.ok ? null : result.error.message,
+                previous_error: result.ok
+                  ? null
+                  : projectAnalysisError(result.error),
                 reason: cause instanceof Error ? cause.message : String(cause),
               },
               { operation: OPERATION },
@@ -283,7 +290,19 @@ const captureFailure = (
     phase === "capture-read" &&
     cause instanceof Error &&
     "code" in cause &&
-    ["ENOENT", "EACCES", "EPERM", "ENOTDIR"].includes(String(cause.code))
+    (cause.code === "EACCES" || cause.code === "EPERM")
+  )
+    return new AnalysisAccessDeniedError(
+      OPERATION,
+      input.capture_path,
+      cause.code,
+      { cause },
+    );
+  if (
+    phase === "capture-read" &&
+    cause instanceof Error &&
+    "code" in cause &&
+    ["ENOENT", "ENOTDIR"].includes(String(cause.code))
   )
     return new AnalysisInputError(OPERATION, { cause }, [
       {

@@ -123,3 +123,54 @@ it("applies an explicit sensitive path literal after verifying the selected arti
   expect(JSON.stringify(result.value)).not.toContain("capture.har");
   expect(result.value.parameters.capture_path).toBe("");
 });
+
+it.each(["log", "entries"])(
+  "excludes a sensitive producer coordinate without inventing a replacement: %s",
+  async (literal) => {
+    const result = await new WebNetworkCaptureService({
+      inspect: () => Promise.resolve(ok(fixture())),
+    }).inspect({
+      capture_path: "/capture.har",
+      format: "har",
+      sensitive_values: [literal],
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.normalized_result).toMatchObject({
+      container: { records_pointer: null },
+      records: [
+        {
+          ordinal: 0,
+          location: { kind: "unknown", reason: "explicit-sensitive-value" },
+        },
+      ],
+    });
+    expect(JSON.stringify(result.value)).not.toContain(literal);
+  },
+);
+
+it("excludes an escaped sensitive sidecar coordinate while preserving its reported field", async () => {
+  const report = fixture();
+  report.container.reported = { "field/name": 42 };
+  report.container.numeric_literals = [
+    { pointer: "/field~1name", producer_type: "json-number", literal: "42" },
+  ];
+  report.container.redactions = [
+    { pointer: "/field~1name", reason: "explicit-sensitive-value" },
+  ];
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(report)),
+  }).inspect({
+    capture_path: "/capture.har",
+    format: "har",
+    sensitive_values: ["~1"],
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.normalized_result).toMatchObject({
+    container: {
+      reported: { "field/name": 42 },
+      numeric_literals: [],
+      redactions: [],
+    },
+  });
+  expect(JSON.stringify(result.value)).not.toContain("~1");
+});

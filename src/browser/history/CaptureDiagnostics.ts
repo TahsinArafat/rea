@@ -1,5 +1,6 @@
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
+  AnalysisAccessDeniedError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisCapabilityUnavailableError,
@@ -50,6 +51,13 @@ export const redactCaptureFailure = (
     if (typeof value === "object" && value !== null) return diagnostics(value);
     return value;
   };
+  if (error instanceof AnalysisAccessDeniedError)
+    return new AnalysisAccessDeniedError(
+      error.operation,
+      text(error.path),
+      error.systemCode,
+      { cause: error },
+    );
   if (error instanceof AnalysisInputError)
     return new AnalysisInputError(
       error.operation,

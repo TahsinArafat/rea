@@ -1,3 +1,4 @@
+import { excludeCaptureCoordinates } from "../domain/webNetworkCaptureCoordinates.js";
 import { isAbsolute } from "node:path";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
 import type { WebNetworkCapturePort } from "./WebNetworkCapturePort.js";
@@ -87,11 +88,12 @@ export class WebNetworkCaptureService {
           "Capture adapter changed the selected artifact, format or original record sequence.",
         ),
       );
+    const safeValue = excludeCaptureCoordinates(value, input.sensitive_values);
     const selected =
       input.record_ordinals ?? value.records.map(({ ordinal }) => ordinal);
     const records = [];
     for (const ordinal of selected) {
-      const record = value.records[ordinal];
+      const record = safeValue.records[ordinal];
       if (record === undefined)
         return err(
           new AnalysisInputError(OPERATION, undefined, [
@@ -112,10 +114,10 @@ export class WebNetworkCaptureService {
     const limitations =
       safePath === ""
         ? [
-            ...value.limitations,
+            ...safeValue.limitations,
             "The explicitly sensitive artifact path is excluded; its observed SHA-256 and size remain available.",
           ]
-        : value.limitations;
+        : safeValue.limitations;
     const parameters = jsonObjectSchema.parse({
       capture_path: safePath,
       format: input.format,
@@ -138,7 +140,7 @@ export class WebNetworkCaptureService {
           operation: OPERATION,
           parameters,
           result: {
-            ...value,
+            ...safeValue,
             artifact: { ...value.artifact, path: safePath },
             records,
             limitations,

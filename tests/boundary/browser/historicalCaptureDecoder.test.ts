@@ -1,4 +1,12 @@
-import { access, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
+import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
+import {
+  access,
+  chmod,
+  mkdtemp,
+  rm,
+  truncate,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
@@ -294,5 +302,141 @@ it.each([
     if (privatePath === undefined)
       throw new Error("Private root was not acquired");
     await expect(access(privatePath)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "reports a real filesystem permission denial separately from missing capture input",
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-historical-denied-"));
+    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    const path = join(root, "unreadable.har");
+    await writeFile(path, JSON.stringify(historicalHar()), { mode: 0o000 });
+    const decoder = new HistoricalCaptureDecoder(
+      [
+        {
+          format: "har",
+          identity: HAR_CAPTURE_PROVIDER_IDENTITY,
+          command: async () => {
+            throw new Error("Permission-denied input must not launch decoding");
+          },
+        },
+      ],
+      process.env,
+    );
+    const result = await decoder.inspect(
+      inspectWebNetworkCaptureInputSchema.parse({
+        capture_path: path,
+        format: "har",
+      }),
+    );
+    await chmod(path, 0o600);
+    if (result.ok) throw new Error("Permission denial required");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "access_denied",
+      category: "unavailable",
+      retryable: false,
+      details: {
+        operation: "inspect_web_network_capture",
+        path,
+        system_code: "EACCES",
+      },
+    });
+    expect(projectAnalysisError(result.error).remediation.action).toContain(
+      "read access",
+    );
+  },
+);
+
+it.each(["format", "process"])(
+  "preserves the structured %s failure when runtime cleanup fails",
+  async (kind) => {
+    const root = await mkdtemp(join(tmpdir(), "rea-historical-cleanup-"));
+    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    const path = join(root, "capture-private.har");
+    await writeFile(path, JSON.stringify(historicalHar()));
+    const decoder = new HistoricalCaptureDecoder(
+      [
+        {
+          format: "har",
+          identity: HAR_CAPTURE_PROVIDER_IDENTITY,
+          command: async (_, runtimePath) => {
+            if (kind === "format")
+              await writeFile(
+                join(runtimePath, "reply.json"),
+                JSON.stringify({
+                  ok: false,
+                  reason: "format",
+                  message: "Malformed retained record",
+                  pointer: "/metadata/capture-private",
+                }),
+              );
+            return {
+              command: process.execPath,
+              arguments: [
+                "-e",
+                kind === "format"
+                  ? "process.exit(0)"
+                  : 'process.stderr.write("Specific provider fault"); process.exit(3)',
+              ],
+            };
+          },
+        },
+      ],
+      process.env,
+      async () => {
+        const runtime = await PrivateRuntimeRoot.create({
+          prefix: "rea-cleanup-proof-",
+        });
+        onTestFinished(() => runtime.close());
+        return {
+          path: runtime.path,
+          close: async () => {
+            throw new Error("Deliberate cleanup denial");
+          },
+        };
+      },
+    );
+    const result = await decoder.inspect(
+      inspectWebNetworkCaptureInputSchema.parse({
+        capture_path: path,
+        format: "har",
+        sensitive_values: ["capture-private"],
+      }),
+    );
+    if (result.ok) throw new Error("Cleanup failure required");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
+        diagnostics: {
+          previous_error:
+            kind === "format"
+              ? {
+                  category: "invalid_input",
+                  details: {
+                    issues: [
+                      {
+                        path: ["capture_path", "/metadata"],
+                        reason: "invalid_format",
+                        message: "Malformed retained record",
+                      },
+                    ],
+                  },
+                }
+              : {
+                  code: "execution_failure",
+                  details: {
+                    diagnostics: {
+                      phase: "decoder",
+                      exit_code: 3,
+                      stderr: "Specific provider fault",
+                    },
+                  },
+                },
+        },
+      },
+    });
+    expect(JSON.stringify(projected)).not.toContain("capture-private");
   },
 );

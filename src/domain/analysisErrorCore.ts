@@ -90,3 +90,19 @@ export class AnalysisTimeoutError extends AnalysisError {
     );
   }
 }
+
+/** Host filesystem permissions denied the selected read; this is not malformed caller input. */
+export class AnalysisAccessDeniedError extends AnalysisError {
+  readonly _tag = "AnalysisAccessDeniedError";
+  constructor(
+    readonly operation: string,
+    readonly path: string,
+    readonly systemCode: "EACCES" | "EPERM",
+    options?: ErrorOptions,
+  ) {
+    super(
+      `Host filesystem read access denied (${systemCode}) for ${path} during ${operation}`,
+      options,
+    );
+  }
+}
