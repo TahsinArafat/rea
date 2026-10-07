@@ -105,7 +105,10 @@ duplicates or the original numeric spelling of parsed native floats.
 ## Resource and lifecycle boundaries
 
 Complete evidence has a 32 MiB input, 96 MiB decoder reply and 64-level nesting
-budget. Exceeding a budget returns no partial success. HAR runs in an owned
+budget. Exceeding a budget returns no partial success.
+Oversized selected captures return an input error identifying `capture_path`
+and the byte budget; owned reply/output failures remain output or provider errors.
+HAR runs in an owned
 192 MiB Node old-generation heap with one V8 worker. Native decoding applies
 Linux limits of 768 MiB address space, 30 seconds CPU and 96 MiB file output;
 both commands have a 30-second wall deadline and independently supervised

@@ -61,6 +61,7 @@ export class HistoricalCaptureDecoder {
   ): Promise<Result<WebNetworkCapture, AnalysisError>> {
     let runtime: PrivateRuntimeRoot | undefined;
     let result: Result<WebNetworkCapture, AnalysisError>;
+    let phase: "capture-read" | "decoder" = "capture-read";
     try {
       const adapter = this.adapters.find(
         (candidate) => candidate.format === input.format,
@@ -76,6 +77,7 @@ export class HistoricalCaptureDecoder {
         WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
         options?.signal,
       );
+      phase = "decoder";
       runtime = await PrivateRuntimeRoot.create({ prefix: "rea-web-capture-" });
       const snapshotPath = join(runtime.path, "capture.snapshot");
       const requestPath = join(runtime.path, "request.json");
@@ -174,7 +176,7 @@ export class HistoricalCaptureDecoder {
     } catch (cause: unknown) {
       result = err(
         redactCaptureFailure(
-          captureFailure(input, cause, options),
+          captureFailure(input, cause, phase, options),
           input.sensitive_values,
         ),
       );
@@ -209,6 +211,7 @@ export class HistoricalCaptureDecoder {
 const captureFailure = (
   input: InspectWebNetworkCaptureInput,
   cause: unknown,
+  phase: "capture-read" | "decoder",
   options?: ExecutionOptions,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
@@ -231,17 +234,26 @@ const captureFailure = (
       return new AnalysisOutputError(OPERATION, cause.message);
   }
   if (options?.signal?.aborted) return new AnalysisCancelledError(OPERATION);
-  if (cause instanceof ArtifactReaderFailure)
-    return cause.reason === "limit"
-      ? new AnalysisOutputError(OPERATION, cause.message, { cause })
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["capture_path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ]);
+  if (phase === "capture-read" && cause instanceof ArtifactReaderFailure)
+    return new AnalysisInputError(OPERATION, { cause }, [
+      {
+        path: ["capture_path"],
+        reason: cause.reason === "limit" ? "out_of_range" : "invalid_format",
+        message:
+          cause.reason === "limit"
+            ? `${cause.message}. Select a capture within the ${WEB_NETWORK_CAPTURE_LIMITS.inputBytes}-byte input budget.`
+            : cause.message,
+        ...(cause.reason === "limit"
+          ? {
+              expected: {
+                maximum_capture_bytes: WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
+              },
+            }
+          : {}),
+      },
+    ]);
   if (
+    phase === "capture-read" &&
     cause instanceof Error &&
     "code" in cause &&
     ["ENOENT", "EACCES", "EPERM", "ENOTDIR"].includes(String(cause.code))
@@ -256,6 +268,7 @@ const captureFailure = (
   return new ProviderAdapterError(input.format, OPERATION, {
     cause,
     diagnostics: {
+      phase,
       capture_path: input.capture_path,
       reason: cause instanceof Error ? cause.message : String(cause),
       ...(cause instanceof OwnedCommandFailure && cause.snapshot !== null

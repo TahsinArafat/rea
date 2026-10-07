@@ -1,12 +1,95 @@
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { HistoricalCaptureDecoder } from "../../../src/browser/history/HistoricalCaptureDecoder.js";
 import { HAR_CAPTURE_PROVIDER_IDENTITY } from "../../../src/browser/history/CaptureRelease.js";
-import { inspectWebNetworkCaptureInputSchema } from "../../../src/domain/webNetworkCapture.js";
+import {
+  inspectWebNetworkCaptureInputSchema,
+  WEB_NETWORK_CAPTURE_LIMITS,
+} from "../../../src/domain/webNetworkCapture.js";
 import { historicalHar } from "../../fixtures/historicalHar.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+
+it("classifies an oversized selected capture before creating an owned decoder", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-historical-limit-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const path = join(root, "input.har");
+  await writeFile(path, "");
+  await truncate(path, WEB_NETWORK_CAPTURE_LIMITS.inputBytes + 1);
+  const decoder = new HistoricalCaptureDecoder(
+    [
+      {
+        format: "har",
+        identity: HAR_CAPTURE_PROVIDER_IDENTITY,
+        command: async () => {
+          throw new Error("Oversized input must not launch decoding");
+        },
+      },
+    ],
+    process.env,
+  );
+  const result = await decoder.inspect(
+    inspectWebNetworkCaptureInputSchema.parse({
+      capture_path: path,
+      format: "har",
+    }),
+  );
+  if (result.ok) throw new Error("Oversized input must fail");
+  expect(result.error._tag).toBe("AnalysisInputError");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    category: "invalid_input",
+    details: {
+      issues: [
+        {
+          path: ["capture_path"],
+          reason: "out_of_range",
+          expected: {
+            maximum_capture_bytes: WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
+          },
+        },
+      ],
+    },
+  });
+});
+
+it("does not misclassify decoder filesystem failures as missing selected input", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-historical-command-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const path = join(root, "input.har");
+  await writeFile(path, JSON.stringify(historicalHar()));
+  const decoder = new HistoricalCaptureDecoder(
+    [
+      {
+        format: "har",
+        identity: HAR_CAPTURE_PROVIDER_IDENTITY,
+        command: async () => {
+          throw Object.assign(
+            new Error("Configured decoder command file missing"),
+            { code: "ENOENT" },
+          );
+        },
+      },
+    ],
+    process.env,
+  );
+  const result = await decoder.inspect(
+    inspectWebNetworkCaptureInputSchema.parse({
+      capture_path: path,
+      format: "har",
+    }),
+  );
+  if (result.ok) throw new Error("Failed decoder command must fail");
+  expect(result.error._tag).toBe("ProviderAdapterError");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    details: {
+      diagnostics: {
+        phase: "decoder",
+        reason: "Configured decoder command file missing",
+      },
+    },
+  });
+});
 
 it.each(["missing-capture", "missing-reply", "failed-command"])(
   "redacts declared paths and diagnostics while preserving the %s failure",

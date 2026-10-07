@@ -2,7 +2,13 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { access, copyFile, readFile, writeFile } from "node:fs/promises";
+import {
+  access,
+  copyFile,
+  readFile,
+  truncate,
+  writeFile,
+} from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -10,6 +16,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { runOwnedCommand } from "../dist/process/OwnedCommand.js";
+import { WEB_NETWORK_CAPTURE_LIMITS } from "../dist/domain/webNetworkCapture.js";
 import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
@@ -258,8 +265,25 @@ try {
     }
   }
   const privatePath = join(runtime.path, "REDACTED.har");
+  const oversizedPath = join(runtime.path, "oversized-capture");
+  await writeFile(oversizedPath, "");
+  await truncate(oversizedPath, WEB_NETWORK_CAPTURE_LIMITS.inputBytes + 1);
   await copyFile(join(runtime.path, "producer.har"), privatePath);
   for (const mode of ["cli", "mcp"]) {
+    for (const format of ["har", "mitmproxy"]) {
+      const failure = await inspect(
+        mode,
+        { capture_path: oversizedPath, format },
+        "invalid_input",
+      );
+      assert.equal(failure.details.issues[0].reason, "out_of_range");
+      assert.deepEqual(failure.details.issues[0].path, ["capture_path"]);
+      assert.equal(
+        failure.details.issues[0].expected.maximum_capture_bytes,
+        WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
+      );
+      cases++;
+    }
     const value = await inspect(mode, {
       capture_path: privatePath,
       format: "har",
@@ -395,7 +419,7 @@ async function inspect(mode, input, errorCategory) {
       assert.equal(value.error.category, errorCategory);
       for (const literal of input.sensitive_values ?? [])
         assert.ok(!JSON.stringify(value.error).includes(literal));
-      return null;
+      return value.error;
     }
     assert.notEqual(result.isError, true, mcpTextValue(result));
     return value.result;
@@ -434,7 +458,7 @@ async function inspect(mode, input, errorCategory) {
     assert.equal(value.category, errorCategory);
     for (const literal of input.sensitive_values ?? [])
       assert.ok(!JSON.stringify(value).includes(literal));
-    return null;
+    return value;
   }
 }
 
