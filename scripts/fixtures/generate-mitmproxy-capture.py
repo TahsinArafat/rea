@@ -81,6 +81,11 @@ class Generator:
         deep["_extension"] = extension
         with (root / "deep.mitm").open("wb") as handle:
             tnetstring.dump(deep, handle)
+        for name, value in [("invalid-credential-key", {1: b"bad-key"}), ("deep-credential", extension)]:
+            malformed = first.get_state()
+            malformed["request"]["headers"] = [(b"Authorization", value)]
+            with (root / (name + ".mitm")).open("wb") as handle:
+                tnetstring.dump(malformed, handle)
         (root / "oracle.json").write_text(json.dumps({"records": 2, "request_base64": "AP9ib2R5", "response_base64": "AP5hbnN3ZXI=", "websocket_base64": "AP1tZXNzYWdl", "id": first.id}))
         ctx.master.shutdown()
 

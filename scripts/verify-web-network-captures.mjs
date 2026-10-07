@@ -317,6 +317,29 @@ try {
       );
       cases++;
     }
+    await inspect(
+      mode,
+      {
+        capture_path: join(runtime.path, "invalid-credential-key.mitm"),
+        format: "mitmproxy",
+      },
+      "unsupported_provider",
+    );
+    cases++;
+    const credentialDepth = await inspect(
+      mode,
+      {
+        capture_path: join(runtime.path, "deep-credential.mitm"),
+        format: "mitmproxy",
+      },
+      "invalid_input",
+    );
+    assert.equal(credentialDepth.details.issues[0].reason, "out_of_range");
+    assert.match(
+      credentialDepth.details.issues[0].path[1],
+      /^\/request\/headers\/0\/1\/child/,
+    );
+    cases++;
     const value = await inspect(mode, {
       capture_path: privatePath,
       format: "har",

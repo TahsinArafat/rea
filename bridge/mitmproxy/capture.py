@@ -61,10 +61,18 @@ def project_record(state, secrets):
             redactions.append({"pointer": path, "reason": "transport-credential"})
         return safe_url, changed
 
+    def validate_omitted(value, path, depth):
+        before = len(binaries), len(numbers), len(redactions)
+        visit(value, path, depth)
+        del binaries[before[0]:]
+        del numbers[before[1]:]
+        del redactions[before[2]:]
+
     def visit(value, path, depth=0, credential=False, transport_url=False):
         if depth > 64:
             raise CaptureFailure("input-limit", "Native capture exceeds the 64-level evidence nesting budget.", path)
         if credential:
+            validate_omitted(value, path, depth)
             redactions.append({"pointer": path, "reason": "transport-credential"})
             if isinstance(value, bytes):
                 binaries.append({"pointer": path, "representation": "producer-bytes", "state": "redacted", "content_base64": None, "bytes": None, "sha256": None})
@@ -114,11 +122,7 @@ def project_record(state, secrets):
                 if any(secret in key for secret in secrets):
                     # Validate the omitted subtree too, then discard all of its
                     # coordinates rather than inventing a replacement identity.
-                    before = len(binaries), len(numbers), len(redactions)
-                    visit(item, pointer(path, key), depth + 1)
-                    del binaries[before[0]:]
-                    del numbers[before[1]:]
-                    del redactions[before[2]:]
+                    validate_omitted(item, pointer(path, key), depth + 1)
                     redactions.append({"pointer": path, "reason": "explicit-sensitive-value", "scope": "property-name"})
                     continue
                 result[key] = visit(item, pointer(path, key), depth + 1)
