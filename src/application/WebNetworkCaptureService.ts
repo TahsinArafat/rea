@@ -1,4 +1,5 @@
 import { excludeCaptureCoordinates } from "../domain/webNetworkCaptureCoordinates.js";
+import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 import { isAbsolute } from "node:path";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
 import type { WebNetworkCapturePort } from "./WebNetworkCapturePort.js";
@@ -89,6 +90,8 @@ export class WebNetworkCaptureService {
         ),
       );
     const safeValue = excludeCaptureCoordinates(value, input.sensitive_values);
+    const redactText = (text: string): string =>
+      redactExplicitText(text, input.sensitive_values);
     const selected =
       input.record_ordinals ?? value.records.map(({ ordinal }) => ordinal);
     const records = [];
@@ -104,20 +107,24 @@ export class WebNetworkCaptureService {
             },
           ]),
         );
-      records.push(record);
+      records.push({
+        ...record,
+        limitations: record.limitations.map(redactText),
+      });
     }
     const safePath = input.sensitive_values.some((literal) =>
       input.capture_path.includes(literal),
     )
       ? ""
       : input.capture_path;
-    const limitations =
+    const limitations = (
       safePath === ""
         ? [
             ...safeValue.limitations,
             "The explicitly sensitive artifact path is excluded; its observed SHA-256 and size remain available.",
           ]
-        : safeValue.limitations;
+        : safeValue.limitations
+    ).map(redactText);
     const parameters = jsonObjectSchema.parse({
       capture_path: safePath,
       format: input.format,

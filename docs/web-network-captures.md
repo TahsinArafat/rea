@@ -96,6 +96,11 @@ sensitive issue pointers identify a real ancestor instead of a fabricated
 coordinate. Header/cookie authentication values and known
 transport URL userinfo are excluded structurally, including native backups.
 
+Generated free-text limitations follow the same literal declarations, including
+global, per-record and Evidence explanations added during projection. Contract
+field names, typed discriminators and exact decoder identities keep their
+canonical meanings; declarations do not rename formats or providers.
+
 Historical evidence does not prove runtime attribution, execution or deployment
 authenticity. Mitmproxy messages are upstream-assembled messages, not recovered
 wire fragments. Native dictionary duplicate keys have the unchanged upstream

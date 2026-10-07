@@ -2,7 +2,10 @@ import { expect, it } from "vitest";
 import { WebNetworkCaptureService } from "./WebNetworkCaptureService.js";
 import { historicalHar } from "../../tests/fixtures/historicalHar.js";
 import { ok } from "../domain/result.js";
-import type { WebNetworkCapture } from "../domain/webNetworkCapture.js";
+import {
+  webNetworkCaptureSchema,
+  type WebNetworkCapture,
+} from "../domain/webNetworkCapture.js";
 
 it.each(["REDACTED", "[", "]", "/capture.har"])(
   "excludes sensitive path text even when a replacement marker would collide: %s",
@@ -70,6 +73,46 @@ const fixture = (): WebNetworkCapture => ({
   runtime_attribution: "unknown",
   limitations: ["historical fixture"],
 });
+
+it.each([
+  ["producer"],
+  ["artifact"],
+  ["coordinates"],
+  ["producer", "REDACTED", "…"],
+])(
+  "excludes declared literals from all authored limitations: %j",
+  async (...literals) => {
+    const report = fixture();
+    report.artifact.path = "/artifact/capture.har";
+    report.limitations = [
+      "Historical producer artifact coordinates are retained.",
+    ];
+    const first = report.records[0];
+    if (first === undefined) throw new Error("fixture missing record");
+    first.limitations = ["This is producer-decoded artifact evidence."];
+    const result = await new WebNetworkCaptureService({
+      inspect: () => Promise.resolve(ok(report)),
+    }).inspect({
+      capture_path: report.artifact.path,
+      format: "har",
+      sensitive_values: literals,
+    });
+    if (!result.ok) throw result.error;
+    const projected = webNetworkCaptureSchema.parse(
+      result.value.normalized_result,
+    );
+    const texts = [
+      result.value.limitations,
+      projected.limitations,
+      ...projected.records.map((record) => record.limitations),
+    ];
+    for (const literal of literals)
+      expect(JSON.stringify(texts)).not.toContain(literal);
+    expect(result.value.subject?.digest.sha256).toBe(report.artifact.sha256);
+    expect(projected.decoder).toEqual(report.decoder);
+    expect(projected.records[0]?.reported).toEqual(first.reported);
+  },
+);
 
 it("keeps explicitly sensitive values out of Evidence parameters and preserves historical authority", async () => {
   const service = new WebNetworkCaptureService({

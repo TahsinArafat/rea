@@ -413,6 +413,24 @@ try {
       cases++;
     }
   }
+  for (const mode of ["cli", "mcp"]) {
+    for (const format of ["har", "mitmproxy"]) {
+      for (const sensitive_values of [
+        ["producer"],
+        ["producer", "REDACTED", "…"],
+      ]) {
+        await inspect(mode, {
+          capture_path: join(
+            runtime.path,
+            format === "har" ? "producer.har" : "flows.mitm",
+          ),
+          format,
+          sensitive_values,
+        });
+        cases++;
+      }
+    }
+  }
   const privatePath = join(runtime.path, "REDACTED.har");
   const oversizedPath = join(runtime.path, "oversized-capture");
   await writeFile(oversizedPath, "");
@@ -617,6 +635,7 @@ async function inspect(mode, input, errorCategory) {
       return value.error;
     }
     assert.notEqual(result.isError, true, mcpTextValue(result));
+    assertSensitiveLimitations(value.evidence, input.sensitive_values ?? []);
     return value.result;
   }
   const args = [
@@ -651,7 +670,23 @@ async function inspect(mode, input, errorCategory) {
     return value;
   }
   assert.equal(errorCategory, undefined, "Expected malformed capture to fail");
-  return JSON.parse(result.stdout).normalized_result;
+  const evidence = JSON.parse(result.stdout);
+  assertSensitiveLimitations(evidence, input.sensitive_values ?? []);
+  return evidence.normalized_result;
+}
+
+function assertSensitiveLimitations(evidence, literals) {
+  const result = evidence.normalized_result;
+  const text = JSON.stringify([
+    evidence.limitations,
+    result.limitations,
+    ...result.records.map((record) => record.limitations),
+  ]);
+  for (const literal of literals)
+    assert.ok(
+      !text.includes(literal),
+      "Declared literal retained in authored limitations",
+    );
 }
 
 function assertBinary(record, pointer, bytes) {
