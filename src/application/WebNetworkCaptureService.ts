@@ -1,3 +1,4 @@
+import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { excludeCaptureCoordinates } from "../domain/webNetworkCaptureCoordinates.js";
 import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 import { isAbsolute } from "node:path";
@@ -31,9 +32,24 @@ export class WebNetworkCaptureService {
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted)
       return err(new AnalysisCancelledError(OPERATION));
+    const declarations =
+      inspectWebNetworkCaptureInputSchema.shape.sensitive_values.safeParse(
+        typeof rawInput === "object" &&
+          rawInput !== null &&
+          "sensitive_values" in rawInput
+          ? rawInput.sensitive_values
+          : undefined,
+      );
+    const failure = (error: AnalysisError): Result<never, AnalysisError> =>
+      err(
+        redactExplicitFailure(
+          error,
+          declarations.success ? declarations.data : [],
+        ),
+      );
     const parsed = inspectWebNetworkCaptureInputSchema.safeParse(rawInput);
     if (!parsed.success)
-      return err(
+      return failure(
         new AnalysisInputError(
           OPERATION,
           { cause: parsed.error },
@@ -42,7 +58,7 @@ export class WebNetworkCaptureService {
       );
     const input = parsed.data;
     if (!isAbsolute(input.capture_path))
-      return err(
+      return failure(
         new AnalysisInputError(OPERATION, undefined, [
           {
             path: ["capture_path"],
@@ -55,7 +71,7 @@ export class WebNetworkCaptureService {
       input.record_ordinals !== undefined &&
       new Set(input.record_ordinals).size !== input.record_ordinals.length
     )
-      return err(
+      return failure(
         new AnalysisInputError(OPERATION, undefined, [
           {
             path: ["record_ordinals"],
@@ -65,12 +81,12 @@ export class WebNetworkCaptureService {
         ]),
       );
     const loaded = await this.port.inspect(input, options);
-    if (!loaded.ok) return loaded;
+    if (!loaded.ok) return failure(loaded.error);
     if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
+      return failure(new AnalysisCancelledError(OPERATION));
     const report = webNetworkCaptureSchema.safeParse(loaded.value);
     if (!report.success)
-      return err(
+      return failure(
         new AnalysisOutputError(
           OPERATION,
           "Capture adapter returned malformed historical evidence.",
@@ -83,7 +99,7 @@ export class WebNetworkCaptureService {
       value.total_records !== value.records.length ||
       value.records.some((record, index) => record.ordinal !== index)
     )
-      return err(
+      return failure(
         new AnalysisOutputError(
           OPERATION,
           "Capture adapter changed the selected artifact, format or original record sequence.",
@@ -98,7 +114,7 @@ export class WebNetworkCaptureService {
     for (const ordinal of selected) {
       const record = safeValue.records[ordinal];
       if (record === undefined)
-        return err(
+        return failure(
           new AnalysisInputError(OPERATION, undefined, [
             {
               path: ["record_ordinals"],

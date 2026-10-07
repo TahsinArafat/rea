@@ -106,3 +106,16 @@ export class AnalysisAccessDeniedError extends AnalysisError {
     );
   }
 }
+
+/** Selected artifact acquisition observed a change, so no stable identity can be reported. */
+export class AnalysisArtifactChangedError extends AnalysisError {
+  readonly _tag = "AnalysisArtifactChangedError";
+  constructor(
+    readonly operation: string,
+    readonly path: string,
+    readonly reason: string,
+    options?: ErrorOptions,
+  ) {
+    super(`Selected artifact changed during acquisition: ${reason}`, options);
+  }
+}

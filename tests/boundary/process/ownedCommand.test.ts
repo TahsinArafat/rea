@@ -14,6 +14,25 @@ const command = (script: string) => ({
   runId: `rea-owned-command-test-${randomUUID()}`,
 });
 
+it("passes cancellation into native ownership preparation before provider creation", async () => {
+  const controller = new AbortController();
+  await expect(
+    runOwnedCommand(
+      command("process.exit(0)"),
+      { timeoutMs: 2000, diagnosticBytes: 1024 },
+      {
+        signal: controller.signal,
+        launcher: async (input) => {
+          expect(input.signal).toBe(controller.signal);
+          controller.abort();
+          input.signal?.throwIfAborted();
+          throw new Error("Cancelled preparation must not launch a provider");
+        },
+      },
+    ),
+  ).rejects.toMatchObject({ reason: "cancelled", snapshot: null });
+});
+
 it("bounds retained diagnostics across both streams during a real output burst", async () => {
   try {
     await runOwnedCommand(

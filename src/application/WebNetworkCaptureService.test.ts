@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { WebNetworkCaptureService } from "./WebNetworkCaptureService.js";
 import { historicalHar } from "../../tests/fixtures/historicalHar.js";
 import { ok } from "../domain/result.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   webNetworkCaptureSchema,
   type WebNetworkCapture,
@@ -218,3 +219,26 @@ it("excludes an escaped sensitive sidecar coordinate while preserving its report
   });
   expect(JSON.stringify(result.value)).not.toContain("~1");
 });
+
+it.each([
+  { literal: "12345", input: { record_ordinals: [12345] } },
+  { literal: "Each", input: { record_ordinals: [0, 0] } },
+  { literal: "absolute", input: { capture_path: "relative.har" } },
+])(
+  "excludes declared text from application-generated input errors: $literal",
+  async ({ literal, input }) => {
+    const result = await new WebNetworkCaptureService({
+      inspect: () => Promise.resolve(ok(fixture())),
+    }).inspect({
+      capture_path: "/capture.har",
+      format: "har",
+      sensitive_values: [literal],
+      ...input,
+    });
+    if (result.ok) throw new Error("Expected invalid selection");
+    expect(result.error._tag).toBe("AnalysisInputError");
+    expect(JSON.stringify(projectAnalysisError(result.error))).not.toContain(
+      literal,
+    );
+  },
+);

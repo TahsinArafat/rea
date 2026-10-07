@@ -131,3 +131,10 @@ original failure information. The original capture is never changed.
 Explicitly marked values also exclude matching source coordinates and their sidecars. A hidden record coordinate is reported as `location.kind: "unknown"`; REA does not invent a replacement pointer. Original record ordinals and artifact digests remain available.
 
 Host filesystem read denials return `code: "access_denied"`, `category: "unavailable"`, the actual `EACCES`/`EPERM` code and read-access guidance. Missing files remain input failures. Cleanup failures retain the prior structured error, including its input constraints or provider diagnostics, with explicitly marked text excluded.
+
+An observed replacement or in-place change during stable artifact acquisition
+returns `code: "artifact_changed"`, `category: "integrity_mismatch"` and
+`retryable: true`, retaining the selected path and reader's reason. Wait until
+the capture file is stable before retrying. No unstable snapshot is decoded.
+Command cleanup failures retain the original status and both diagnostic streams;
+the decoder's ownership preparation receives the same cancellation signal.

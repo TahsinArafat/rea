@@ -431,6 +431,33 @@ try {
       }
     }
   }
+  for (const mode of ["cli", "mcp"]) {
+    for (const selection of [
+      { record_ordinals: [12345], sensitive_values: ["12345"] },
+      { record_ordinals: [0, 0], sensitive_values: ["Each"] },
+    ]) {
+      await inspect(
+        mode,
+        {
+          capture_path: join(runtime.path, "producer.har"),
+          format: "har",
+          ...selection,
+        },
+        "invalid_input",
+      );
+      cases++;
+    }
+  }
+  await inspect(
+    "mcp",
+    {
+      capture_path: "relative.har",
+      format: "har",
+      sensitive_values: ["absolute"],
+    },
+    "invalid_input",
+  );
+  cases++;
   const privatePath = join(runtime.path, "REDACTED.har");
   const oversizedPath = join(runtime.path, "oversized-capture");
   await writeFile(oversizedPath, "");

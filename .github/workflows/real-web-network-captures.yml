@@ -10,7 +10,7 @@ on:
       - "src/domain/webNetworkCapture*.ts"
       - "src/domain/analysisError*.ts"
       - "src/contracts/errorSchemas.ts"
-      - "src/domain/explicitSensitiveValues.ts"
+      - "src/domain/explicitSensitive*.ts"
       - "src/application/WebNetworkCapture*"
       - "src/composition/webNetworkCaptures.ts"
       - "src/cli/webNetworkCaptureCommands.ts"

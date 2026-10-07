@@ -3,6 +3,7 @@ const ANALYSIS_ERROR_TAGS = [
   "AnalysisProtocolError",
   "AnalysisInputError",
   "AnalysisAccessDeniedError",
+  "AnalysisArtifactChangedError",
   "AnalysisOutputError",
   "AnalysisCapabilityUnavailableError",
   "AnalysisCancelledError",

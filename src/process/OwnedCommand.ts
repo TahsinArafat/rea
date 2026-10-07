@@ -35,12 +35,29 @@ export const runOwnedCommand = async (
     ) => Promise<SpawnedOwnedProviderProcess>;
   } = {},
 ): Promise<ProviderProcessSnapshot> => {
-  if (options.signal?.aborted)
+  const signal = options.signal ?? spawn.signal;
+  if (signal?.aborted)
     throw new OwnedCommandFailure(
       "cancelled",
       "Command cancelled before launch.",
     );
-  const launched = await (options.launcher ?? spawnOwnedProviderProcess)(spawn);
+  let launched: SpawnedOwnedProviderProcess;
+  try {
+    launched = await (options.launcher ?? spawnOwnedProviderProcess)({
+      ...spawn,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  } catch (cause: unknown) {
+    if (signal?.aborted)
+      throw new OwnedCommandFailure(
+        "cancelled",
+        "Command cancelled during ownership preparation.",
+        null,
+        null,
+        { cause },
+      );
+    throw cause;
+  }
   let exceeded = false;
   let processFailure: string | undefined;
   const supervisor = new ProviderProcessSupervisor(
@@ -64,7 +81,7 @@ export const runOwnedCommand = async (
   let failure: OwnedCommandFailure | undefined;
   try {
     while (!(await supervisor.waitForOutputClose(10))) {
-      if (options.signal?.aborted)
+      if (signal?.aborted)
         throw new OwnedCommandFailure("cancelled", "Command cancelled.");
       if (Date.now() >= deadline)
         throw new OwnedCommandFailure("timeout", "Command deadline elapsed.");
@@ -75,7 +92,7 @@ export const runOwnedCommand = async (
         );
       if (processFailure !== undefined)
         throw new OwnedCommandFailure("process", processFailure);
-      await waitForAbortableDelay(25, options.signal);
+      await waitForAbortableDelay(25, signal);
     }
     const snapshot = supervisor.snapshot();
     if (Date.now() >= deadline)
@@ -90,7 +107,7 @@ export const runOwnedCommand = async (
         "Command diagnostic output exceeded its complete-output budget.",
         snapshot,
       );
-    if (options.signal?.aborted)
+    if (signal?.aborted)
       throw new OwnedCommandFailure(
         "cancelled",
         "Command cancelled.",
@@ -145,7 +162,7 @@ export const runOwnedCommand = async (
       { cause: failure },
       failure.resources,
     );
-  if (options.signal?.aborted)
+  if (signal?.aborted)
     throw new OwnedCommandFailure("cancelled", "Command cancelled.", snapshot);
   return snapshot;
 };

@@ -1,15 +1,15 @@
-import { AnalysisAccessDeniedError } from "../../domain/analysisErrorCore.js";
+import { AnalysisAccessDeniedError } from "./analysisErrorCore.js";
 import { expect, it } from "vitest";
 import {
   AnalysisInputError,
   AnalysisCapabilityUnavailableError,
-} from "../../domain/analysisErrorCore.js";
-import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+} from "./analysisErrorCore.js";
+import { projectAnalysisError } from "./analysisErrorProjection.js";
+import { ProviderCleanupError } from "./providerCleanupError.js";
 import {
-  redactCaptureFailure,
-  redactCapturePointer,
-} from "./CaptureDiagnostics.js";
+  redactExplicitFailure,
+  redactExplicitPointer,
+} from "./explicitSensitiveFailure.js";
 
 it.each([
   ["/metadata/private~1~0/numeric", ["private/~"], "/metadata"],
@@ -18,7 +18,7 @@ it.each([
 ])(
   "preserves a real parent for excluded pointer identities: %s",
   (pointer, values, expected) => {
-    expect(redactCapturePointer(pointer, values)).toBe(expected);
+    expect(redactExplicitPointer(pointer, values)).toBe(expected);
   },
 );
 
@@ -34,7 +34,7 @@ it("preserves cleanup failure authority and resources while excluding diagnostic
     { operation: "inspect_web_network_capture" },
   );
   const projected = projectAnalysisError(
-    redactCaptureFailure(error, ["private", "REDACTED"]),
+    redactExplicitFailure(error, ["private", "REDACTED"]),
   );
   expect(projected.code).toBe("cleanup_incomplete");
   expect(JSON.stringify(projected)).not.toContain("private");
@@ -50,7 +50,7 @@ it("keeps unsupported profile reasons distinct from malformed input", () => {
     "Unsupported private profile",
     { userMessage: "Select private-compatible profile" },
   );
-  const result = redactCaptureFailure(error, ["private"]);
+  const result = redactExplicitFailure(error, ["private"]);
   expect(result).toBeInstanceOf(AnalysisCapabilityUnavailableError);
   expect(projectAnalysisError(result).code).toBe("capability_unavailable");
   expect(JSON.stringify(projectAnalysisError(result))).not.toContain("private");
@@ -68,7 +68,7 @@ it("coarsens format issue pointers without creating replacement coordinates", ()
       },
     ],
   );
-  const result = redactCaptureFailure(error, ["private/~", "private"]);
+  const result = redactExplicitFailure(error, ["private/~", "private"]);
   expect(result).toBeInstanceOf(AnalysisInputError);
   if (!(result instanceof AnalysisInputError))
     throw new Error("Input error required");
@@ -76,7 +76,7 @@ it("coarsens format issue pointers without creating replacement coordinates", ()
 });
 
 it("excludes a marked permission-denied path without losing its host error code", () => {
-  const error = redactCaptureFailure(
+  const error = redactExplicitFailure(
     new AnalysisAccessDeniedError(
       "inspect_web_network_capture",
       "/declared-path-value/capture.har",

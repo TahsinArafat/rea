@@ -1,17 +1,18 @@
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { AnalysisError } from "./analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
+  AnalysisArtifactChangedError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisCapabilityUnavailableError,
-} from "../../domain/analysisErrorCore.js";
-import { redactExplicitText } from "../../domain/explicitSensitiveValues.js";
-import type { JsonValue } from "../../domain/jsonValue.js";
-import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+} from "./analysisErrorCore.js";
+import { redactExplicitText } from "./explicitSensitiveValues.js";
+import type { JsonValue } from "./jsonValue.js";
+import { ProviderAdapterError } from "./providerAdapterError.js";
+import { ProviderCleanupError } from "./providerCleanupError.js";
 
-/** Keep a real ancestor coordinate when a producer property identity is explicitly excluded. */
-export const redactCapturePointer = (
+/** Keep a real JSON-pointer ancestor when a property identity is explicitly excluded. */
+export const redactExplicitPointer = (
   pointer: string,
   values: readonly string[],
 ): string => {
@@ -30,8 +31,8 @@ export const redactCapturePointer = (
   return parent;
 };
 
-/** Exclude explicit literals at the failure boundary while preserving typed diagnostic meaning. */
-export const redactCaptureFailure = (
+/** Exclude explicit literals from common acquisition/decoder failures, preserving typed diagnostics. */
+export const redactExplicitFailure = (
   error: AnalysisError,
   values: readonly string[],
 ): AnalysisError => {
@@ -58,6 +59,13 @@ export const redactCaptureFailure = (
       error.systemCode,
       { cause: error },
     );
+  if (error instanceof AnalysisArtifactChangedError)
+    return new AnalysisArtifactChangedError(
+      error.operation,
+      text(error.path),
+      text(error.reason),
+      { cause: error },
+    );
   if (error instanceof AnalysisInputError)
     return new AnalysisInputError(
       error.operation,
@@ -66,7 +74,7 @@ export const redactCaptureFailure = (
         ...issue,
         path: issue.path.map((part) =>
           typeof part === "string" && part.startsWith("/")
-            ? redactCapturePointer(part, values)
+            ? redactExplicitPointer(part, values)
             : part,
         ),
         ...(issue.message === undefined
