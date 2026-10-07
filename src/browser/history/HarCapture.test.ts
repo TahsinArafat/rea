@@ -2,6 +2,53 @@ import { expect, it } from "vitest";
 import { historicalHar } from "../../../tests/fixtures/historicalHar.js";
 import { decodeHarCapture } from "./HarCapture.js";
 
+it.each([
+  { value: "REDACTED", sensitive: ["REDACTED"] },
+  { value: "literal[", sensitive: ["["] },
+  { value: "before secret after", sensitive: ["secret", "REDACTED"] },
+  { value: "before secret after", sensitive: ["secret", "[RED"] },
+])(
+  "excludes sensitive text without introducing replacement literals: $value",
+  ({ value, sensitive }) => {
+    const fixture = historicalHar();
+    const result = decodeHarCapture(
+      JSON.stringify({ ...fixture, _sensitive: value, _ordinary: "unmarked" }),
+      sensitive,
+    );
+    expect(result.container.reported).toMatchObject({
+      _sensitive: null,
+      _ordinary: "unmarked",
+    });
+    expect(result.container.redactions).toContainEqual({
+      pointer: "/_sensitive",
+      reason: "explicit-sensitive-value",
+    });
+  },
+);
+
+it("excludes a declared literal introduced by stripping transport URL userinfo", () => {
+  const fixture = historicalHar();
+  const entry = fixture.log.entries[0];
+  if (entry === undefined) throw new Error("fixture missing");
+  const url = "https://example.test/sensitive";
+  const input = {
+    log: {
+      ...fixture.log,
+      entries: [
+        {
+          ...entry,
+          request: {
+            ...entry.request,
+            url: "https://user:password@example.test/sensitive",
+          },
+        },
+      ],
+    },
+  };
+  const result = decodeHarCapture(JSON.stringify(input), [url]);
+  expect(result.records[0]?.reported).toMatchObject({ request: { url: null } });
+});
+
 it("preserves Unicode, offsets, sizes, duplicate URLs and opaque extensions without inventing bytes", () => {
   const fixture = historicalHar();
   const first = fixture.log.entries[0];

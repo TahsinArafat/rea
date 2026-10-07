@@ -81,8 +81,10 @@ supported by this adapter.
 
 Mark sensitive literal string/UTF-8 byte values with MCP `sensitive_values`, or
 repeat CLI `--sensitive-value`. These declarations are never persisted in
-Evidence parameters; the count is retained. Explicit binary matches exclude
-the entire byte field rather than rewrite payload bytes. The file digest still
+Evidence parameters; the count is retained. Explicit text/UTF-8 byte matches
+exclude the entire field with a reported `null` rather than substitute a text
+marker or rewrite payload bytes. This prevents replacement markers from
+reintroducing declared literals. The file digest still
 identifies the original artifact. Header/cookie authentication values and known
 transport URL userinfo are excluded structurally, including native backups.
 

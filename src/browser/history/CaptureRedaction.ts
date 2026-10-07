@@ -14,7 +14,7 @@ export class CaptureRedaction {
   constructor(readonly sensitiveValues: readonly string[]) {}
 
   /** Preserve exact text unless explicitly sensitive or known transport URL userinfo. */
-  text(value: string, pointer: string, transportUrl = false): string {
+  text(value: string, pointer: string, transportUrl = false): string | null {
     let result = value;
     if (transportUrl) {
       const match = /^((?:[a-z][a-z0-9+.-]*:)?\/\/)([^/?#]*@)/i.exec(result);
@@ -23,13 +23,14 @@ export class CaptureRedaction {
         this.redactions.push({ pointer, reason: "transport-credential" });
       }
     }
-    for (const literal of [...this.sensitiveValues].sort(
-      (a, b) => b.length - a.length,
-    ))
-      if (result.includes(literal)) {
-        result = result.replaceAll(literal, "[REDACTED]");
-        this.redactions.push({ pointer, reason: "explicit-sensitive-value" });
-      }
+    if (
+      this.sensitiveValues.some(
+        (literal) => value.includes(literal) || result.includes(literal),
+      )
+    ) {
+      this.redactions.push({ pointer, reason: "explicit-sensitive-value" });
+      return null;
+    }
     return result;
   }
 

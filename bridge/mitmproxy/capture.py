@@ -44,12 +44,22 @@ class BoundedReader:
 def project_record(state, secrets):
     binaries, numbers, redactions = [], [], []
 
-    def redact(text, path):
-        for secret in sorted(secrets, key=len, reverse=True):
-            if secret in text:
-                text = text.replace(secret, "[REDACTED]")
-                redactions.append({"pointer": path, "reason": "explicit-sensitive-value"})
+    def redact(text, path, original):
+        if any(secret in text or secret in original for secret in secrets):
+            redactions.append({"pointer": path, "reason": "explicit-sensitive-value"})
+            return None
         return text
+
+    def transport_text(text, path, transport_url):
+        if not (transport_url or re.fullmatch(r"/(?:backup/)*request/(?:path|authority)", path)):
+            return text, False
+        safe_url = re.sub(r"^((?:[a-z][a-z0-9+.-]*:)?//)[^/?#]*@", r"\1", text, flags=re.I)
+        if path.endswith("/authority") and "@" in safe_url:
+            safe_url = safe_url.rsplit("@", 1)[1]
+        changed = safe_url != text
+        if changed:
+            redactions.append({"pointer": path, "reason": "transport-credential"})
+        return safe_url, changed
 
     def visit(value, path, depth=0, credential=False, transport_url=False):
         if depth > 64:
@@ -67,14 +77,9 @@ def project_record(state, secrets):
             except UnicodeDecodeError:
                 pass
             credential_url = False
-            if safe_text is not None and (transport_url or re.fullmatch(r"/(?:backup/)*request/(?:path|authority)", path)):
-                safe_url = re.sub(r"^((?:[a-z][a-z0-9+.-]*:)?//)[^/?#]*@", r"\1", safe_text, flags=re.I)
-                if path.endswith("/authority") and "@" in safe_url:
-                    safe_url = safe_url.rsplit("@", 1)[1]
-                credential_url = safe_url != safe_text
-                safe_text = safe_url
-                if credential_url:
-                    redactions.append({"pointer": path, "reason": "transport-credential"})
+            if safe_text is not None:
+                safe_text, credential_url = transport_text(safe_text, path, transport_url)
+                hidden = hidden or any(secret in safe_text for secret in secrets)
             if hidden:
                 redactions.append({"pointer": path, "reason": "explicit-sensitive-value"})
             exclude = hidden or credential_url
@@ -83,7 +88,8 @@ def project_record(state, secrets):
                 return None
             return safe_text
         if isinstance(value, str):
-            return redact(value, path)
+            safe_text, _ = transport_text(value, path, transport_url)
+            return redact(safe_text, path, value)
         if isinstance(value, bool) or value is None:
             return value
         if isinstance(value, (int, float)):

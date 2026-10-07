@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from mitmproxy import connection, ctx, http
 from mitmproxy.io import FlowWriter
+from mitmproxy.io import tnetstring
 from mitmproxy.addons.savehar import SaveHar
 from mitmproxy.websocket import WebSocketData, WebSocketMessage
 
@@ -33,7 +34,19 @@ class Generator:
         har_first.request.path = "/a?token=ordinary#fragment"
         har_second.request.path = "/a?token=ordinary#fragment"
         har_first.response.raw_content = b"\x00\xff\x01\xfe"
-        (root / "producer.har").write_text(json.dumps(SaveHar().make_har([har_first, har_second])))
+        markers = {"sensitive": "REDACTED", "bracket": "literal[", "overlap": "secret", "ordinary": "unmarked"}
+        har = SaveHar().make_har([har_first, har_second])
+        har["log"]["entries"][0]["_markers"] = markers
+        (root / "producer.har").write_text(json.dumps(har))
+        strings = first.get_state()
+        for state in [strings, strings["backup"]]:
+            state["request"]["path"] = "https://native-user:string-password@example.test/string-path"
+            state["request"]["authority"] = "authority-user:authority-password@example.test"
+            state["request"]["headers"] = [(b"Referer", "https://referer-user:referer-password@example.test/from"), (b"Origin", "//origin-user:origin-password@example.test")]
+            state["response"]["headers"] = [(b"Location", "https://location-user:location-password@example.test/to")]
+            state["metadata"]["_markers"] = dict(markers)
+        with (root / "string-urls.mitm").open("wb") as handle:
+            tnetstring.dump(strings, handle)
         (root / "oracle.json").write_text(json.dumps({"records": 2, "request_base64": "AP9ib2R5", "response_base64": "AP5hbnN3ZXI=", "websocket_base64": "AP1tZXNzYWdl", "id": first.id}))
         ctx.master.shutdown()
 

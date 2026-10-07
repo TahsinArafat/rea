@@ -158,6 +158,63 @@ try {
       cases++;
     }
   }
+  for (const mode of ["cli", "mcp"]) {
+    const value = await inspect(mode, {
+      capture_path: join(runtime.path, "string-urls.mitm"),
+      format: "mitmproxy",
+    });
+    const first = value.records[0];
+    for (const state of [first.reported, first.reported.backup]) {
+      assert.equal(state.request.path, "https://example.test/string-path");
+      assert.equal(state.request.authority, "example.test");
+      assert.deepEqual(
+        state.request.headers.map((field) => field[1]),
+        ["https://example.test/from", "//example.test"],
+      );
+      assert.equal(state.response.headers[0][1], "https://example.test/to");
+    }
+    assert.ok(!JSON.stringify(value).includes("password"));
+    assert.ok(
+      first.redactions.some(
+        (redaction) =>
+          redaction.pointer === "/backup/request/authority" &&
+          redaction.reason === "transport-credential",
+      ),
+    );
+    cases++;
+  }
+  for (const sensitive_values of [
+    ["REDACTED", "["],
+    ["secret", "REDACTED"],
+  ]) {
+    for (const format of ["har", "mitmproxy"]) {
+      for (const mode of ["cli", "mcp"]) {
+        const value = await inspect(mode, {
+          capture_path: join(
+            runtime.path,
+            format === "har" ? "producer.har" : "string-urls.mitm",
+          ),
+          format,
+          record_ordinals: [0],
+          sensitive_values,
+        });
+        const first = value.records[0];
+        const markers =
+          format === "har"
+            ? first.reported._markers
+            : first.reported.metadata._markers;
+        assert.equal(markers.sensitive, null);
+        assert.equal(markers.ordinary, "unmarked");
+        assert.equal(
+          sensitive_values.includes("[") ? markers.bracket : markers.overlap,
+          null,
+        );
+        if (format === "mitmproxy")
+          assert.equal(first.reported.backup.metadata._markers.sensitive, null);
+        cases++;
+      }
+    }
+  }
   for (const format of ["har", "mitmproxy"]) {
     const path = join(runtime.path, `malformed-${format}`);
     await writeFile(path, format === "har" ? "{invalid-json" : "999999999999:");
