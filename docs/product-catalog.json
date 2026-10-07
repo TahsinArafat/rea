@@ -1,7 +1,7 @@
 {
   "package": {
     "name": "rea-agents",
-    "version": "4.1.0",
+    "version": "5.0.0",
     "sdk": {
       "server": "2.3.1",
       "client": "2.3.1",
@@ -689,9 +689,9 @@
       "mcp_prompts": 6
     },
     "digests": {
-      "tools_sha256": "7511a66481fbaac76a0263b1c57460df1f1e992445306a11cc995453776d8801",
+      "tools_sha256": "a045824b01125a93fe489ca6a0a7f8e0da1985c72ed2be0c38a45dab2bb5b919",
       "prompts_sha256": "ef2de8814390b340623c32001610aa2709d90bed51537b6e562ab3abf144ab4d",
-      "combined_sha256": "084bcefd48b4d3d7398f108885b234668c4ad2974bfd4a9c4d2a786ee664916b",
+      "combined_sha256": "3b9b01f625c011cb11d8a8daad596a9ed56c35c67210a4b006f1fc67ff6afcd0",
       "providers_sha256": "ad36e4a93b39a38bf25f0500885d2f71523d5e858d731e04c37e7fd03f380ff0"
     }
   }

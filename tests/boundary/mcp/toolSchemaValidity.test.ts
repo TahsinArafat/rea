@@ -6,7 +6,7 @@ import { z } from "zod";
 
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import { emptyArraySchema } from "../../../src/domain/emptyArraySchema.js";
-import { processScenarioSchema } from "../../../src/domain/processScenario.js";
+import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import { GENERATED_MCP_TOOL_CATALOG } from "../../../src/generatedMcpToolCatalog.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 
@@ -26,6 +26,38 @@ function schemaErrors(tools: readonly ToolSchemas[]): string[] {
       return [`${tool.name}.${kind}: ${ajv.errorsText(ajv.errors)}`];
     }),
   );
+}
+
+function expectStrictInputSchemaParity(
+  tools: readonly ToolSchemas[],
+  ajv: Ajv2020,
+): void {
+  const advertised = new Map(tools.map((tool) => [tool.name, tool]));
+  const names = [
+    "inspect_managed_artifact",
+    "inspect_managed_members",
+    "inspect_managed_native_boundaries",
+    "list_browser_targets",
+    "open_binary",
+    "close_binary",
+    "binary_session",
+    "find_changed_behavior",
+    "build_call_path",
+    "record_unknown",
+    "update_unknown",
+  ];
+  for (const name of names) {
+    const contract = TOOL_CONTRACTS.find(
+      ({ name: toolName }) => toolName === name,
+    );
+    const tool = advertised.get(name);
+    const example = contract?.examples[0];
+    if (contract === undefined || tool === undefined || example === undefined)
+      throw new Error(`${name} did not have an advertised example`);
+    const malformed = { ...example.input, __unexpected_root_key__: true };
+    expect(contract.inputSchema.safeParse(malformed).success, name).toBe(false);
+    expect(ajv.compile(tool.inputSchema)(malformed), name).toBe(false);
+  }
 }
 
 const advertiseAndEnforceProcessEnvironmentKeyConstraint =
@@ -189,6 +221,8 @@ describe("MCP JSON Schema validity", () => {
             `${contract.name}: ${example.title}`,
           ).toBe(true);
       }
+
+      expectStrictInputSchemaParity(tools, ajv);
 
       const nativeObservation = TOOL_CONTRACTS.find(
         ({ name }) => name === "observe_native_ui",
