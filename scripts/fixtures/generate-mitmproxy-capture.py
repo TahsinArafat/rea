@@ -36,6 +36,12 @@ class Generator:
                 assert error.pointer == "/metadata", error.pointer
             else:
                 raise AssertionError("Invalid native representation was accepted")
+        for value in [" \tHTTPS://ows-user:ows-secret@example.test/path\t ", b" \tHTTPS://ows-user:ows-secret@example.test/path\t "]:
+            projected = adapter.project_record({"request": {"headers": [(b"Referer", value)]}}, [])
+            assert projected["reported"]["request"]["headers"][0][1] == " \tHTTPS://example.test/path\t ", projected
+            assert "ows-secret" not in json.dumps(projected), projected
+            if isinstance(value, bytes):
+                assert projected["binary_fields"][-1]["state"] == "redacted", projected
         (root / "native-error-classifications.json").write_text(json.dumps({"passed": len(classifications) + 2}))
         first = http.HTTPFlow(connection.Client(peername=("127.0.0.1", 1), sockname=("127.0.0.1", 2)), connection.Server(address=("example.test", 80)))
         first.id = "original-producer-id"
@@ -94,6 +100,17 @@ class Generator:
             malformed["request"]["headers"] = [(b"Authorization", value)]
             with (root / (name + ".mitm")).open("wb") as handle:
                 tnetstring.dump(malformed, handle)
+        whitespace_har = json.loads((root / "producer.har").read_text())
+        entry = whitespace_har["log"]["entries"][0]
+        for side, name in [("response", "Location"), ("request", "Referer"), ("request", "Origin")]:
+            entry[side]["headers"] = [{"name": name, "value": " \tHTTPS://ows-user:ows-secret@example.test/path?token=ordinary#fragment\t "}] + entry[side]["headers"]
+        (root / "ows.har").write_text(json.dumps(whitespace_har))
+        whitespace_native = first.get_state()
+        for state in [whitespace_native, whitespace_native["backup"]]:
+            state["request"]["headers"] = [(b"Referer", b" \tHTTPS://ows-user:ows-secret@example.test/path?token=ordinary#fragment\t "), (b"Origin", " \t//ows-user:ows-secret@example.test/path?token=ordinary#fragment\t ")]
+            state["response"]["headers"] = [(b"Location", " \tHTTPS://ows-user:ows-secret@example.test/path?token=ordinary#fragment\t ")]
+        with (root / "ows.mitm").open("wb") as handle:
+            tnetstring.dump(whitespace_native, handle)
         (root / "oracle.json").write_text(json.dumps({"records": 2, "request_base64": "AP9ib2R5", "response_base64": "AP5hbnN3ZXI=", "websocket_base64": "AP1tZXNzYWdl", "id": first.id}))
         ctx.master.shutdown()
 

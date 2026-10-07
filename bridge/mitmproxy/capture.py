@@ -53,7 +53,7 @@ def project_record(state, secrets):
     def transport_text(text, path, transport_url):
         if not (transport_url or re.fullmatch(r"/(?:backup/)*request/(?:path|authority)", path)):
             return text, False
-        safe_url = re.sub(r"^((?:[a-z][a-z0-9+.-]*:)?//)[^/?#]*@", r"\1", text, flags=re.I)
+        safe_url = re.sub(r"^([ \t]*(?:[a-z][a-z0-9+.-]*:)?//)[^/?#]*@", r"\1", text, flags=re.I)
         if path.endswith("/authority") and "@" in safe_url:
             safe_url = safe_url.rsplit("@", 1)[1]
         changed = safe_url != text

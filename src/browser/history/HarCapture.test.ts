@@ -365,3 +365,46 @@ it("rejects excessive extension nesting instead of returning a partial capture",
     ),
   ).toThrow("nesting budget");
 });
+
+it.each([
+  { name: "Location", side: "response" as const },
+  { name: "Referer", side: "request" as const },
+  { name: "Origin", side: "request" as const },
+])(
+  "excludes leading-OWS userinfo from a producer $name header",
+  ({ name, side }) => {
+    const fixture = historicalHar();
+    const first = fixture.log.entries[0];
+    if (first === undefined) throw new Error("fixture missing");
+    const value =
+      " \tHTTPS://user:password@example.test/path?token=ordinary#fragment\t ";
+    const result = decodeHarCapture(
+      JSON.stringify({
+        log: {
+          ...fixture.log,
+          entries: [
+            {
+              ...first,
+              [side]: { ...first[side], headers: [{ name, value }] },
+            },
+          ],
+        },
+      }),
+      [],
+    );
+    expect(result.records[0]?.reported).toMatchObject({
+      [side]: {
+        headers: [
+          {
+            name,
+            value: " \tHTTPS://example.test/path?token=ordinary#fragment\t ",
+          },
+        ],
+      },
+    });
+    expect(result.records[0]?.redactions).toContainEqual({
+      pointer: `/${side}/headers/0/value`,
+      reason: "transport-credential",
+    });
+  },
+);

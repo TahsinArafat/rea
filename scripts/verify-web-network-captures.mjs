@@ -275,6 +275,67 @@ try {
       cases++;
     }
   }
+  for (const format of ["har", "mitmproxy"]) {
+    for (const mode of ["cli", "mcp"]) {
+      const value = await inspect(mode, {
+        capture_path: join(
+          runtime.path,
+          format === "har" ? "ows.har" : "ows.mitm",
+        ),
+        format,
+      });
+      assert.ok(!JSON.stringify(value).includes("ows-secret"));
+      const record = value.records[0];
+      const states =
+        format === "har"
+          ? [record.reported]
+          : [record.reported, record.reported.backup];
+      for (const state of states) {
+        if (format === "har") {
+          for (const side of ["request", "response"])
+            assert.ok(
+              state[side].headers.some(
+                (header) =>
+                  header.value ===
+                  " \tHTTPS://example.test/path?token=ordinary#fragment\t ",
+              ),
+            );
+        } else {
+          assert.deepEqual(state.request.headers, [
+            [
+              "Referer",
+              " \tHTTPS://example.test/path?token=ordinary#fragment\t ",
+            ],
+            ["Origin", " \t//example.test/path?token=ordinary#fragment\t "],
+          ]);
+          assert.deepEqual(state.response.headers, [
+            [
+              "Location",
+              " \tHTTPS://example.test/path?token=ordinary#fragment\t ",
+            ],
+          ]);
+        }
+      }
+      if (format === "mitmproxy") {
+        for (const pointer of [
+          "/request/headers/0/1",
+          "/backup/request/headers/0/1",
+        ])
+          assert.deepEqual(
+            record.binary_fields.find((field) => field.pointer === pointer),
+            {
+              pointer,
+              representation: "producer-bytes",
+              state: "redacted",
+              content_base64: null,
+              bytes: null,
+              sha256: null,
+            },
+          );
+      }
+      cases++;
+    }
+  }
   const privatePath = join(runtime.path, "REDACTED.har");
   const oversizedPath = join(runtime.path, "oversized-capture");
   await writeFile(oversizedPath, "");
