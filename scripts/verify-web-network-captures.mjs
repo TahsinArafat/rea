@@ -496,18 +496,13 @@ async function inspect(mode, input, errorCategory) {
       value,
     ]),
   ];
+  let result;
   try {
-    const result = await promisify(execFile)(process.execPath, args, {
+    result = await promisify(execFile)(process.execPath, args, {
       env: environment,
       timeout: 40_000,
       maxBuffer: 96 * 1024 * 1024,
     });
-    assert.equal(
-      errorCategory,
-      undefined,
-      "Expected malformed capture to fail",
-    );
-    return JSON.parse(result.stdout).normalized_result;
   } catch (cause) {
     if (errorCategory === undefined) throw cause;
     assert.equal(typeof cause.code, "number");
@@ -517,6 +512,8 @@ async function inspect(mode, input, errorCategory) {
       assert.ok(!JSON.stringify(value).includes(literal));
     return value;
   }
+  assert.equal(errorCategory, undefined, "Expected malformed capture to fail");
+  return JSON.parse(result.stdout).normalized_result;
 }
 
 function assertBinary(record, pointer, bytes) {
