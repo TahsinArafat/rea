@@ -1,0 +1,231 @@
+import { expect, it } from "vitest";
+import { historicalHar } from "../../../tests/fixtures/historicalHar.js";
+import { decodeHarCapture } from "./HarCapture.js";
+
+it("preserves Unicode, offsets, sizes, duplicate URLs and opaque extensions without inventing bytes", () => {
+  const fixture = historicalHar();
+  const first = fixture.log.entries[0];
+  if (first === undefined) throw new Error("fixture missing");
+  fixture.log.entries.push(structuredClone(first));
+  const result = decodeHarCapture(
+    JSON.stringify({
+      ...fixture,
+      _extension: { isLosslessNumber: true, value: "ordinary" },
+    }),
+    [],
+  );
+  expect(result.total_records).toBe(2);
+  expect(result.records[0]?.reported).toEqual(fixture.log.entries[0]);
+  expect(result.records[0]?.binary_fields).toEqual([]);
+  expect(result.records[0]?.numeric_literals).toContainEqual({
+    pointer: "/response/bodySize",
+    producer_type: "json-number",
+    literal: "99",
+  });
+  expect(result.records[1]?.location).toEqual({
+    kind: "json-pointer",
+    pointer: "/log/entries/1",
+  });
+  expect(result.container.reported).toMatchObject({
+    _extension: { isLosslessNumber: true, value: "ordinary" },
+    log: { entries: null },
+  });
+});
+
+it("keeps unsafe extension numeric lexemes and rejects unsafe mandatory schema numbers", () => {
+  const text = JSON.stringify(historicalHar());
+  const result = decodeHarCapture(
+    text.replace('"cache":{}', '"cache":{},"_big":9007199254740993'),
+    [],
+  );
+  expect(result.records[0]?.numeric_literals).toContainEqual({
+    pointer: "/_big",
+    producer_type: "json-number",
+    literal: "9007199254740993",
+  });
+  expect(result.records[0]?.reported).toMatchObject({ _big: null });
+  expect(() =>
+    decodeHarCapture(
+      text.replace('"bodySize":0', '"bodySize":9007199254740993'),
+      [],
+    ),
+  ).toThrow("HAR schema validation failed");
+});
+
+it("retains valid base64 bytes independently of declared sizes", () => {
+  const fixture = historicalHar();
+  const entry = fixture.log.entries[0];
+  if (entry === undefined) throw new Error("fixture missing");
+  const text = JSON.stringify({
+    log: {
+      ...fixture.log,
+      entries: [
+        {
+          ...entry,
+          response: {
+            ...entry.response,
+            content: {
+              size: 999,
+              mimeType: "application/octet-stream",
+              encoding: "base64",
+              text: "AP9B\n",
+            },
+          },
+        },
+      ],
+    },
+  });
+  const result = decodeHarCapture(text, []);
+  expect(result.records[0]?.binary_fields[0]).toMatchObject({
+    pointer: "/response/content/text",
+    state: "retained",
+    content_base64: "AP9B",
+    bytes: 3,
+  });
+  expect(result.records[0]?.reported).toMatchObject({
+    response: { content: { size: 999, text: "AP9B\n" } },
+  });
+  expect(() => decodeHarCapture(text.replace("AP9B", "AR=="), [])).toThrow(
+    "not valid canonical base64",
+  );
+});
+
+it("redacts actual authentication fields and explicit binary values while preserving similarly named extensions", () => {
+  const fixture = historicalHar();
+  const entry = fixture.log.entries[0];
+  if (entry === undefined) throw new Error("fixture missing");
+  const raw = {
+    log: {
+      ...fixture.log,
+      entries: [
+        {
+          ...entry,
+          request: {
+            ...entry.request,
+            url: "https://user:password@example.test/a?token=ordinary#fragment",
+            headers: [
+              { name: "Authorization", value: "Bearer transport-secret" },
+              { name: "X-Test", value: "a" },
+              { name: "X-Test", value: "b" },
+            ],
+            cookies: [{ name: "session", value: "cookie-secret" }],
+          },
+          response: {
+            ...entry.response,
+            content: {
+              size: 5,
+              mimeType: "application/octet-stream",
+              encoding: "base64",
+              text: Buffer.from("chosen-private").toString("base64"),
+            },
+          },
+          _extension: {
+            response: {
+              headers: [{ name: "Authorization", value: "ordinary-extension" }],
+            },
+          },
+        },
+      ],
+    },
+  };
+  const result = decodeHarCapture(JSON.stringify(raw), ["chosen-private"]);
+  const output = JSON.stringify(result);
+  for (const secret of [
+    "password",
+    "transport-secret",
+    "cookie-secret",
+    Buffer.from("chosen-private").toString("base64"),
+  ])
+    expect(output).not.toContain(secret);
+  expect(output).toContain("token=ordinary#fragment");
+  expect(output).toContain("ordinary-extension");
+  expect(result.records[0]?.reported).toMatchObject({
+    request: {
+      headers: [
+        { name: "Authorization", value: null },
+        { name: "X-Test", value: "a" },
+        { name: "X-Test", value: "b" },
+      ],
+    },
+  });
+  expect(result.records[0]?.binary_fields[0]).toMatchObject({
+    state: "redacted",
+    sha256: null,
+    content_base64: null,
+  });
+});
+
+it.each([
+  "{",
+  '{"log":{},"log":{}}',
+  JSON.stringify({ log: { version: "1.2", entries: [] } }),
+])("rejects malformed producer data %s", (text) => {
+  expect(() => decodeHarCapture(text, [])).toThrow();
+});
+
+it("preserves observed SaveHar null post-data without broadening arbitrary HAR producers", () => {
+  const fixture = historicalHar();
+  const first = fixture.log.entries[0];
+  if (first === undefined) throw new Error("fixture missing");
+  const log = {
+    ...fixture.log,
+    creator: { name: "mitmproxy", version: "12.2.3" },
+    entries: [
+      {
+        ...first,
+        request: {
+          ...first.request,
+          postData: { mimeType: "text/plain", text: null },
+        },
+      },
+    ],
+  };
+  expect(
+    decodeHarCapture(JSON.stringify({ log }), []).records[0]?.reported,
+  ).toMatchObject({ request: { postData: { text: null } } });
+  expect(() =>
+    decodeHarCapture(
+      JSON.stringify({
+        log: { ...log, creator: { name: "other", version: "1" } },
+      }),
+      [],
+    ),
+  ).toThrow("HAR schema validation failed");
+});
+
+it("excludes a declared literal in encoded HAR text from its binary sidecar too", () => {
+  const fixture = historicalHar();
+  const first = fixture.log.entries[0];
+  if (first === undefined) throw new Error("fixture missing");
+  const log = {
+    ...fixture.log,
+    entries: [
+      {
+        ...first,
+        response: {
+          ...first.response,
+          content: {
+            size: 3,
+            mimeType: "application/octet-stream",
+            encoding: "base64",
+            text: "AP9B",
+          },
+        },
+      },
+    ],
+  };
+  const result = decodeHarCapture(JSON.stringify({ log }), ["AP9B"]);
+  expect(JSON.stringify(result)).not.toContain("AP9B");
+  expect(result.records[0]?.binary_fields[0]?.state).toBe("redacted");
+});
+
+it("rejects excessive extension nesting instead of returning a partial capture", () => {
+  let extension: unknown = null;
+  for (let index = 0; index < 66; index++) extension = { child: extension };
+  expect(() =>
+    decodeHarCapture(
+      JSON.stringify({ ...historicalHar(), _extension: extension }),
+      [],
+    ),
+  ).toThrow("nesting budget");
+});

@@ -1,0 +1,83 @@
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { expect, it, onTestFinished } from "vitest";
+import { HistoricalCaptureDecoder } from "../../../src/browser/history/HistoricalCaptureDecoder.js";
+import { HAR_CAPTURE_PROVIDER_IDENTITY } from "../../../src/browser/history/CaptureRelease.js";
+import { inspectWebNetworkCaptureInputSchema } from "../../../src/domain/webNetworkCapture.js";
+import { historicalHar } from "../../fixtures/historicalHar.js";
+
+it("reports an absent owned reply as output failure and removes its private snapshot root", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-historical-decoder-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const path = join(root, "input.har");
+  await writeFile(path, JSON.stringify(historicalHar()));
+  let privatePath: string | undefined;
+  const decoder = new HistoricalCaptureDecoder(
+    [
+      {
+        format: "har",
+        identity: HAR_CAPTURE_PROVIDER_IDENTITY,
+        command: async (_, runtimePath) => {
+          privatePath = runtimePath;
+          return {
+            command: process.execPath,
+            arguments: ["-e", "process.exit(0)"],
+          };
+        },
+      },
+    ],
+    process.env,
+  );
+  const result = await decoder.inspect(
+    inspectWebNetworkCaptureInputSchema.parse({
+      capture_path: path,
+      format: "har",
+    }),
+  );
+  if (result.ok) throw new Error("Owned reply is required");
+  expect(result.error._tag).toBe("AnalysisOutputError");
+  expect(result.error.message).toContain("ENOENT");
+  if (privatePath === undefined)
+    throw new Error("Private root was not acquired");
+  await expect(access(privatePath)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("cancels after snapshot acquisition before launch and removes private input declarations", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-historical-cancel-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const path = join(root, "input.har");
+  await writeFile(path, JSON.stringify(historicalHar()));
+  let privatePath: string | undefined;
+  const controller = new AbortController();
+  const decoder = new HistoricalCaptureDecoder(
+    [
+      {
+        format: "har",
+        identity: HAR_CAPTURE_PROVIDER_IDENTITY,
+        command: async (_, runtimePath) => {
+          privatePath = runtimePath;
+          controller.abort();
+          return {
+            command: process.execPath,
+            arguments: ["-e", "process.exit(3)"],
+          };
+        },
+      },
+    ],
+    process.env,
+  );
+  const result = await decoder.inspect(
+    inspectWebNetworkCaptureInputSchema.parse({
+      capture_path: path,
+      format: "har",
+      sensitive_values: ["explicit-private-declaration"],
+    }),
+    { signal: controller.signal },
+  );
+  if (result.ok) throw new Error("Cancelled acquisition must fail");
+  expect(result.error._tag).toBe("AnalysisCancelledError");
+  if (privatePath === undefined)
+    throw new Error("Private root was not acquired");
+  await expect(access(privatePath)).rejects.toMatchObject({ code: "ENOENT" });
+});

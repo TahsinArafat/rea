@@ -1,0 +1,84 @@
+import { expect, it } from "vitest";
+import { WebNetworkCaptureService } from "./WebNetworkCaptureService.js";
+import { historicalHar } from "../../tests/fixtures/historicalHar.js";
+import { ok } from "../domain/result.js";
+import type { WebNetworkCapture } from "../domain/webNetworkCapture.js";
+
+const fixture = (): WebNetworkCapture => ({
+  decoder: { id: "test-historical-port", version: "1" },
+  container: {
+    reported: null,
+    numeric_literals: [],
+    redactions: [],
+    records_pointer: "/log/entries",
+  },
+  total_records: 1,
+  records: [
+    {
+      ordinal: 0,
+      location: { kind: "json-pointer", pointer: "/log/entries/0" },
+      reported: historicalHar().log.entries[0] ?? null,
+      numeric_literals: [],
+      binary_fields: [],
+      redactions: [],
+      limitations: [],
+    },
+  ],
+  artifact: { path: "/capture.har", sha256: "a".repeat(64), bytes: 10 },
+  format: "har",
+  runtime_attribution: "unknown",
+  limitations: ["historical fixture"],
+});
+
+it("keeps explicitly sensitive values out of Evidence parameters and preserves historical authority", async () => {
+  const service = new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(fixture())),
+  });
+  const result = await service.inspect({
+    capture_path: "/capture.har",
+    format: "har",
+    sensitive_values: ["explicit-private-value"],
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.parameters).toMatchObject({
+    sensitive_value_count: 1,
+    record_ordinals: [0],
+  });
+  expect(JSON.stringify(result.value)).not.toContain("explicit-private-value");
+  expect(result.value.authority).toBe("historical-reference");
+});
+
+it.each([
+  { record_ordinals: [0, 0] },
+  { record_ordinals: [1] },
+  { capture_path: "relative.har" },
+])("rejects invalid caller selection %j", async (extra) => {
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(fixture())),
+  }).inspect({ capture_path: "/capture.har", format: "har", ...extra });
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error._tag).toBe("AnalysisInputError");
+});
+
+it("rejects a port changing the artifact identity or producer ordinal sequence", async () => {
+  const report = fixture();
+  report.artifact.path = "/different.har";
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(report)),
+  }).inspect({ capture_path: "/capture.har", format: "har" });
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error._tag).toBe("AnalysisOutputError");
+});
+
+it("applies an explicit sensitive path literal after verifying the selected artifact", async () => {
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(fixture())),
+  }).inspect({
+    capture_path: "/capture.har",
+    format: "har",
+    sensitive_values: ["capture.har"],
+  });
+  if (!result.ok) throw result.error;
+  expect(JSON.stringify(result.value)).not.toContain("capture.har");
+  expect(result.value.parameters.capture_path).toBe("/[REDACTED]");
+});

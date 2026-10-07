@@ -1,0 +1,162 @@
+"""REA offline adapter using mitmproxy's unchanged native tnetstring decoder.
+
+No FlowReader migrations, HAR conversion, proxy listener, or target requests.
+The containing mitmdump process and its configuration directory are REA-owned.
+"""
+
+import base64
+import hashlib
+import json
+import math
+import re
+import resource
+from pathlib import Path
+
+from mitmproxy import ctx, version
+from mitmproxy.io import tnetstring
+
+PROFILE = "12.2.3"
+OUTPUT_BYTES = 96 * 1024 * 1024
+CREDENTIALS = {b"authorization", b"proxy-authorization", b"cookie", b"set-cookie"}
+
+
+class CaptureFailure(Exception):
+    def __init__(self, reason, message, pointer=""):
+        self.reason, self.pointer = reason, pointer
+        super().__init__(message)
+
+
+def pointer(parent, key):
+    return parent + "/" + str(key).replace("~", "~0").replace("/", "~1")
+
+
+class BoundedReader:
+    """Refuse malicious declared lengths before the upstream parser allocates."""
+    def __init__(self, handle, size):
+        self.handle, self.size = handle, size
+
+    def read(self, count):
+        if count < 0 or count > self.size - self.handle.tell():
+            raise CaptureFailure("format", "Native record declares bytes beyond the retained capture.")
+        return self.handle.read(count)
+
+
+def project_record(state, secrets):
+    binaries, numbers, redactions = [], [], []
+
+    def redact(text, path):
+        for secret in sorted(secrets, key=len, reverse=True):
+            if secret in text:
+                text = text.replace(secret, "[REDACTED]")
+                redactions.append({"pointer": path, "reason": "explicit-sensitive-value"})
+        return text
+
+    def visit(value, path, depth=0, credential=False, transport_url=False):
+        if depth > 64:
+            raise CaptureFailure("limit", "Native capture exceeds the 64-level evidence nesting budget.", path)
+        if credential:
+            redactions.append({"pointer": path, "reason": "transport-credential"})
+            if isinstance(value, bytes):
+                binaries.append({"pointer": path, "representation": "producer-bytes", "state": "redacted", "content_base64": None, "bytes": None, "sha256": None})
+            return None
+        if isinstance(value, bytes):
+            hidden = any(secret.encode("utf-8") in value for secret in secrets)
+            safe_text = None
+            try:
+                safe_text = value.decode("utf-8", errors="strict")
+            except UnicodeDecodeError:
+                pass
+            credential_url = False
+            if safe_text is not None and (transport_url or re.fullmatch(r"/(?:backup/)*request/(?:path|authority)", path)):
+                safe_url = re.sub(r"^((?:[a-z][a-z0-9+.-]*:)?//)[^/?#]*@", r"\1", safe_text, flags=re.I)
+                if path.endswith("/authority") and "@" in safe_url:
+                    safe_url = safe_url.rsplit("@", 1)[1]
+                credential_url = safe_url != safe_text
+                safe_text = safe_url
+                if credential_url:
+                    redactions.append({"pointer": path, "reason": "transport-credential"})
+            if hidden:
+                redactions.append({"pointer": path, "reason": "explicit-sensitive-value"})
+            exclude = hidden or credential_url
+            binaries.append({"pointer": path, "representation": "producer-bytes", "state": "redacted" if exclude else "retained", "content_base64": None if exclude else base64.b64encode(value).decode("ascii"), "bytes": None if exclude else len(value), "sha256": None if exclude else hashlib.sha256(value).hexdigest()})
+            if hidden:
+                return None
+            return safe_text
+        if isinstance(value, str):
+            return redact(value, path)
+        if isinstance(value, bool) or value is None:
+            return value
+        if isinstance(value, (int, float)):
+            literal = repr(value)
+            numbers.append({"pointer": path, "producer_type": "integer" if isinstance(value, int) else "float", "literal": literal})
+            return value if (abs(value) <= 9007199254740991 if isinstance(value, int) else math.isfinite(value)) else None
+        if isinstance(value, (list, tuple)):
+            fields = re.fullmatch(r"/(?:backup/)*(?:request|response)/(?:headers|trailers)", path)
+            if fields:
+                result = []
+                for index, field in enumerate(value):
+                    if not isinstance(field, (list, tuple)) or len(field) != 2 or not isinstance(field[0], bytes):
+                        raise CaptureFailure("format", "Native header/trailer is not an ordered byte pair.", pointer(path, index))
+                    result.append([visit(field[0], pointer(pointer(path, index), 0), depth + 2), visit(field[1], pointer(pointer(path, index), 1), depth + 2, field[0].lower() in CREDENTIALS, field[0].lower() in {b"location", b"referer", b"origin"})])
+                return result
+            return [visit(item, pointer(path, index), depth + 1) for index, item in enumerate(value)]
+        if isinstance(value, dict):
+            result = {}
+            for key, item in value.items():
+                if not isinstance(key, str):
+                    raise CaptureFailure("unsupported", "Native record has a non-string dictionary key.", path)
+                result[key] = visit(item, pointer(path, key), depth + 1)
+            return result
+        raise CaptureFailure("unsupported", "Native parser returned an unsupported value type.", path)
+
+    return {"reported": visit(state, ""), "binary_fields": binaries, "numeric_literals": numbers, "redactions": redactions}
+
+
+def decode(request):
+    if version.VERSION != PROFILE:
+        raise CaptureFailure("unsupported", "Expected mitmproxy " + PROFILE + "; observed " + version.VERSION + ".")
+    records = []
+    capture = Path(request["snapshot_path"])
+    size = capture.stat().st_size
+    with capture.open("rb") as handle:
+        reader = BoundedReader(handle, size)
+        while handle.tell() < size:
+            start = handle.tell()
+            try:
+                state = tnetstring.load(reader)
+            except CaptureFailure:
+                raise
+            except (ValueError, IndexError, UnicodeError, RecursionError):
+                raise CaptureFailure("format", "Malformed native record at byte offset " + str(start) + ".") from None
+            if not isinstance(state, dict):
+                raise CaptureFailure("format", "Native flow record must be a dictionary at byte offset " + str(start) + ".")
+            records.append({"ordinal": len(records), "location": {"kind": "byte-range", "offset": start, "bytes": handle.tell() - start}, **project_record(state, request["sensitive_values"]), "limitations": ["Fields are original native states without FlowReader migration. Binary fields contain exact producer bytes; reported UTF-8 strings for those fields are derived display views. Unknown flow/version extensions are retained without interpretation."]})
+    return {"decoder": {"id": "mitmproxy-native-tnetstring", "version": PROFILE}, "container": {"reported": None, "numeric_literals": [], "redactions": [], "records_pointer": None}, "total_records": len(records), "records": records}
+
+
+class OfflineCapture:
+    def load(self, loader):
+        loader.add_option("rea_request_path", str, "", "REA private offline capture request")
+
+    def running(self):
+        resource.setrlimit(resource.RLIMIT_AS, (768 * 1024 * 1024, 768 * 1024 * 1024))
+        resource.setrlimit(resource.RLIMIT_CPU, (30, 30))
+        resource.setrlimit(resource.RLIMIT_FSIZE, (OUTPUT_BYTES, OUTPUT_BYTES))
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        request = json.loads(Path(ctx.options.rea_request_path).read_text(encoding="utf-8"))
+        try:
+            response = {"ok": True, "value": decode(request)}
+        except CaptureFailure as error:
+            response = {"ok": False, "reason": error.reason, "message": str(error), "pointer": error.pointer}
+        except Exception as error:
+            response = {"ok": False, "reason": "format", "message": "Offline native decoder failed: " + type(error).__name__ + ".", "pointer": ""}
+        try:
+            output = json.dumps(response, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("ascii")
+            if len(output) > OUTPUT_BYTES:
+                output = b'{"ok":false,"reason":"limit","message":"Native reply exceeds the complete-evidence output budget.","pointer":""}'
+            Path(request["reply_path"]).write_bytes(output)
+        finally:
+            ctx.master.shutdown()
+
+
+addons = [OfflineCapture()]

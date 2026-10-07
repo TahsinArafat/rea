@@ -1,0 +1,271 @@
+import type { HistoricalCaptureFormatAdapter } from "./HistoricalCaptureFormatAdapter.js";
+import { randomUUID } from "node:crypto";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { z } from "zod";
+import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisCancelledError,
+  AnalysisInputError,
+  AnalysisOutputError,
+  AnalysisTimeoutError,
+} from "../../domain/analysisErrorCore.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import { err, ok, type Result } from "../../domain/result.js";
+import {
+  WEB_NETWORK_CAPTURE_LIMITS,
+  webNetworkCaptureSchema,
+  type InspectWebNetworkCaptureInput,
+  type WebNetworkCapture,
+} from "../../domain/webNetworkCapture.js";
+import {
+  OwnedCommandFailure,
+  runOwnedCommand,
+} from "../../process/OwnedCommand.js";
+import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
+
+const OPERATION = "inspect_web_network_capture";
+const decodedSchema = webNetworkCaptureSchema.omit({
+  artifact: true,
+  format: true,
+  runtime_attribution: true,
+  limitations: true,
+});
+const replySchema = z.discriminatedUnion("ok", [
+  z.strictObject({ ok: z.literal(true), value: decodedSchema }),
+  z.strictObject({
+    ok: z.literal(false),
+    reason: z.enum(["format", "unsupported", "limit"]),
+    message: z.string(),
+    pointer: z.string(),
+  }),
+]);
+
+/** One owned snapshot/process/root lifecycle for replaceable historical format decoders. */
+export class HistoricalCaptureDecoder {
+  constructor(
+    readonly adapters: readonly HistoricalCaptureFormatAdapter[],
+    readonly environment: Readonly<NodeJS.ProcessEnv>,
+  ) {}
+
+  /** Snapshot the selected artifact, decode it offline, and release private credentials and processes. */
+  async inspect(
+    input: InspectWebNetworkCaptureInput,
+    options?: ExecutionOptions,
+  ): Promise<Result<WebNetworkCapture, AnalysisError>> {
+    let runtime: PrivateRuntimeRoot | undefined;
+    let result: Result<WebNetworkCapture, AnalysisError>;
+    try {
+      const adapter = this.adapters.find(
+        (candidate) => candidate.format === input.format,
+      );
+      if (adapter === undefined)
+        throw new AnalysisCapabilityUnavailableError(
+          input.format,
+          OPERATION,
+          "No adapter is configured for the selected capture format.",
+        );
+      const snapshot = await readStableArtifact(
+        input.capture_path,
+        WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
+        options?.signal,
+      );
+      runtime = await PrivateRuntimeRoot.create({ prefix: "rea-web-capture-" });
+      const snapshotPath = join(runtime.path, "capture.snapshot");
+      const requestPath = join(runtime.path, "request.json");
+      const replyPath = join(runtime.path, "reply.json");
+      await writeFile(snapshotPath, snapshot.bytes, {
+        mode: 0o600,
+        flag: "wx",
+        ...(options?.signal === undefined ? {} : { signal: options.signal }),
+      });
+      await writeFile(
+        requestPath,
+        JSON.stringify({
+          snapshot_path: snapshotPath,
+          reply_path: replyPath,
+          sensitive_values: input.sensitive_values,
+        }),
+        { mode: 0o600, flag: "wx" },
+      );
+      const command = await adapter.command(requestPath, runtime.path);
+      const environment: NodeJS.ProcessEnv = {
+        ...this.environment,
+        UV_THREADPOOL_SIZE: "1",
+      };
+      delete environment.NODE_OPTIONS;
+      await runOwnedCommand(
+        {
+          ...command,
+          runId: `rea-web-capture-${randomUUID()}`,
+          cwd: runtime.path,
+          hostEnvironment: environment,
+        },
+        {
+          timeoutMs: WEB_NETWORK_CAPTURE_LIMITS.timeoutMs,
+          diagnosticBytes: 1024 * 1024,
+        },
+        options?.signal === undefined ? {} : { signal: options.signal },
+      );
+      let reply: z.output<typeof replySchema>;
+      try {
+        const replyFile = await readStableArtifact(
+          replyPath,
+          WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
+          options?.signal,
+        );
+        reply = replySchema.parse(JSON.parse(replyFile.bytes.toString("utf8")));
+      } catch (cause: unknown) {
+        if (options?.signal?.aborted)
+          throw new AnalysisCancelledError(OPERATION);
+        throw new AnalysisOutputError(
+          OPERATION,
+          `Owned capture decoder reply failed for ${input.capture_path}: ${replyFailureReason(cause)}`,
+          { cause },
+        );
+      }
+      if (!reply.ok) {
+        if (reply.reason === "format")
+          throw new AnalysisInputError(OPERATION, undefined, [
+            {
+              path: ["capture_path", reply.pointer],
+              reason: "invalid_format",
+              message: reply.message,
+            },
+          ]);
+        if (reply.reason === "unsupported")
+          throw new AnalysisCapabilityUnavailableError(
+            input.format,
+            OPERATION,
+            reply.message,
+          );
+        throw new AnalysisOutputError(OPERATION, reply.message);
+      }
+      if (
+        reply.value.decoder.id !== adapter.identity.id ||
+        reply.value.decoder.version !== adapter.identity.version
+      )
+        throw new AnalysisOutputError(
+          OPERATION,
+          "Capture decoder changed the selected upstream profile identity.",
+        );
+      result = ok({
+        ...reply.value,
+        artifact: {
+          path: input.capture_path,
+          sha256: snapshot.sha256,
+          bytes: snapshot.bytes.length,
+        },
+        format: input.format,
+        runtime_attribution: "unknown",
+        limitations: [
+          "This is retained producer evidence, without live browser transaction IDs, scenario provenance, execution attribution or deployment authenticity. Recorded URLs are never fetched.",
+          "Every record is decoded before selection; no partial success is returned on malformed input or a resource limit.",
+          "Known authentication headers/cookies and explicitly marked literal values are excluded. Unknown extension names do not establish sensitivity.",
+          "A 32 MiB input, 96 MiB reply and 64-level nesting budget bound complete evidence. HAR uses a 192 MiB Node old-generation heap; native decoding uses a 768 MiB Linux address-space limit. Each owned command has a 30-second deadline with independent cleanup.",
+        ],
+      });
+    } catch (cause: unknown) {
+      result = err(captureFailure(input, cause, options));
+    }
+    if (runtime !== undefined) {
+      try {
+        await runtime.close();
+      } catch (cause: unknown) {
+        return err(
+          new ProviderCleanupError(
+            input.format,
+            [runtime.path],
+            {
+              capture_path: input.capture_path,
+              previous_error: result.ok ? null : result.error.message,
+              reason: cause instanceof Error ? cause.message : String(cause),
+            },
+            { operation: OPERATION },
+          ),
+        );
+      }
+    }
+    return result.ok && options?.signal?.aborted
+      ? err(new AnalysisCancelledError(OPERATION))
+      : result;
+  }
+}
+
+const captureFailure = (
+  input: InspectWebNetworkCaptureInput,
+  cause: unknown,
+  options?: ExecutionOptions,
+): AnalysisError => {
+  if (cause instanceof AnalysisError) return cause;
+  if (cause instanceof OwnedCommandFailure) {
+    if (cause.cleanupFailure !== null)
+      return new ProviderCleanupError(
+        input.format,
+        cause.resources,
+        { reason: cause.cleanupFailure, previous_error: cause.message },
+        { operation: OPERATION, cause },
+      );
+    if (cause.reason === "cancelled")
+      return new AnalysisCancelledError(OPERATION);
+    if (cause.reason === "timeout")
+      return new AnalysisTimeoutError(
+        OPERATION,
+        WEB_NETWORK_CAPTURE_LIMITS.timeoutMs,
+      );
+    if (cause.reason === "output-limit")
+      return new AnalysisOutputError(OPERATION, cause.message);
+  }
+  if (options?.signal?.aborted) return new AnalysisCancelledError(OPERATION);
+  if (cause instanceof ArtifactReaderFailure)
+    return cause.reason === "limit"
+      ? new AnalysisOutputError(OPERATION, cause.message, { cause })
+      : new AnalysisInputError(OPERATION, { cause }, [
+          {
+            path: ["capture_path"],
+            reason: "invalid_format",
+            message: cause.message,
+          },
+        ]);
+  if (
+    cause instanceof Error &&
+    "code" in cause &&
+    ["ENOENT", "EACCES", "EPERM", "ENOTDIR"].includes(String(cause.code))
+  )
+    return new AnalysisInputError(OPERATION, { cause }, [
+      {
+        path: ["capture_path"],
+        reason: "invalid_value",
+        message: `Selected capture could not be read (${String(cause.code)}): ${input.capture_path}.`,
+      },
+    ]);
+  return new ProviderAdapterError(input.format, OPERATION, {
+    cause,
+    diagnostics: {
+      capture_path: input.capture_path,
+      reason: cause instanceof Error ? cause.message : String(cause),
+      ...(cause instanceof OwnedCommandFailure && cause.snapshot !== null
+        ? {
+            exit_code: cause.snapshot.exitCode ?? null,
+            signal: cause.snapshot.signal ?? null,
+            stderr: cause.snapshot.stderr.text,
+          }
+        : {}),
+    },
+  });
+};
+
+const replyFailureReason = (cause: unknown): string => {
+  if (cause instanceof ArtifactReaderFailure) return cause.message;
+  if (cause instanceof z.ZodError)
+    return `Reply violates its schema at ${cause.issues[0]?.path.map(String).join(".") ?? "root"}.`;
+  if (cause instanceof SyntaxError) return "Reply is malformed JSON.";
+  if (cause instanceof Error && "code" in cause)
+    return `Reply file could not be read (${String(cause.code)}).`;
+  return "Reply could not be validated.";
+};
