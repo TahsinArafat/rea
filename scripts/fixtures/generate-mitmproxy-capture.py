@@ -1,3 +1,4 @@
+import importlib.util
 import json
 from pathlib import Path
 from mitmproxy import connection, ctx, http
@@ -9,9 +10,25 @@ from mitmproxy.websocket import WebSocketData, WebSocketMessage
 class Generator:
     def load(self, loader):
         loader.add_option("rea_fixture_root", str, "", "Owned synthetic fixture root")
+        loader.add_option("rea_adapter_path", str, "", "REA native adapter under verification")
 
     def running(self):
         root = Path(ctx.options.rea_fixture_root)
+        spec = importlib.util.spec_from_file_location("rea_capture_under_test", ctx.options.rea_adapter_path)
+        adapter = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(adapter)
+        classifications = [
+            (adapter.CaptureFailure("format", "Malformed retained record.", "/record"), "format"),
+            (adapter.CaptureFailure("input-limit", "Nesting budget.", "/extension"), "input-limit"),
+            (MemoryError("payload must not enter diagnostics"), "resource-limit"),
+            (RuntimeError("payload must not enter diagnostics"), "decoder"),
+            (OSError("payload must not enter diagnostics"), "decoder"),
+        ]
+        for error, expected in classifications:
+            reply = adapter.failure_reply(error)
+            assert reply["reason"] == expected, reply
+            assert "payload must not enter diagnostics" not in json.dumps(reply)
+        (root / "native-error-classifications.json").write_text(json.dumps({"passed": len(classifications)}))
         first = http.HTTPFlow(connection.Client(peername=("127.0.0.1", 1), sockname=("127.0.0.1", 2)), connection.Server(address=("example.test", 80)))
         first.id = "original-producer-id"
         first.request = http.Request.make("POST", "http://example.test/a?token=ordinary", b"\x00\xffbody", [(b"Authorization", b"Bearer native-transport-secret"), (b"X-Duplicate", b"one"), (b"X-Duplicate", b"two")])
@@ -55,6 +72,15 @@ class Generator:
         strings["metadata"]["_private_properties"]["private-property/~"] = {1: b"unsupported-key"}
         with (root / "invalid-private-key.mitm").open("wb") as handle:
             tnetstring.dump(strings, handle)
+        extension = "leaf"
+        for _ in range(66):
+            extension = {"child": extension}
+        har["_extension"] = extension
+        (root / "deep.har").write_text(json.dumps(har))
+        deep = first.get_state()
+        deep["_extension"] = extension
+        with (root / "deep.mitm").open("wb") as handle:
+            tnetstring.dump(deep, handle)
         (root / "oracle.json").write_text(json.dumps({"records": 2, "request_base64": "AP9ib2R5", "response_base64": "AP5hbnN3ZXI=", "websocket_base64": "AP1tZXNzYWdl", "id": first.id}))
         ctx.master.shutdown()
 

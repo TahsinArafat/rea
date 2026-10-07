@@ -46,8 +46,8 @@ const main = async (): Promise<void> => {
           }
         : {
             ok: false,
-            reason: "format",
-            message: "HAR decoder could not complete validation.",
+            reason: "decoder",
+            message: `HAR decoder failed unexpectedly (${cause instanceof Error ? cause.name : "unknown exception"}).`,
             pointer: "",
           };
   }

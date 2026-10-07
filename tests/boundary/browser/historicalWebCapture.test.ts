@@ -81,3 +81,29 @@ it("keeps malformed JSON separate from absent external mitmproxy capability", as
     category: "unsupported_provider",
   });
 });
+
+it("reports the actual HAR decoder nesting constraint as a typed selected-input issue", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-history-depth-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  let extension: unknown = "leaf";
+  for (let depth = 0; depth < 66; depth++) extension = { child: extension };
+  const path = join(root, "deep.har");
+  await writeFile(
+    path,
+    JSON.stringify({ ...historicalHar(), _extension: extension }),
+  );
+  const result = await cli(path, "har");
+  expect(result.ok).toBe(false);
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    category: "invalid_input",
+    details: {
+      issues: [
+        {
+          path: ["capture_path", expect.stringMatching(/^\/_extension\/child/)],
+          reason: "out_of_range",
+          expected: { maximum_capture_nesting: 64 },
+        },
+      ],
+    },
+  });
+});

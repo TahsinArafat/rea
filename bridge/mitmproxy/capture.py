@@ -63,7 +63,7 @@ def project_record(state, secrets):
 
     def visit(value, path, depth=0, credential=False, transport_url=False):
         if depth > 64:
-            raise CaptureFailure("limit", "Native capture exceeds the 64-level evidence nesting budget.", path)
+            raise CaptureFailure("input-limit", "Native capture exceeds the 64-level evidence nesting budget.", path)
         if credential:
             redactions.append({"pointer": path, "reason": "transport-credential"})
             if isinstance(value, bytes):
@@ -142,12 +142,23 @@ def decode(request):
                 state = tnetstring.load(reader)
             except CaptureFailure:
                 raise
-            except (ValueError, IndexError, UnicodeError, RecursionError):
+            except RecursionError:
+                raise CaptureFailure("input-limit", "Native parser exceeded its recursion budget at byte offset " + str(start) + ".") from None
+            except (ValueError, IndexError, UnicodeError, EOFError):
                 raise CaptureFailure("format", "Malformed native record at byte offset " + str(start) + ".") from None
             if not isinstance(state, dict):
                 raise CaptureFailure("format", "Native flow record must be a dictionary at byte offset " + str(start) + ".")
             records.append({"ordinal": len(records), "location": {"kind": "byte-range", "offset": start, "bytes": handle.tell() - start}, **project_record(state, request["sensitive_values"]), "limitations": ["Fields are original native states without FlowReader migration. Binary fields contain exact producer bytes; reported UTF-8 strings for those fields are derived display views. Unknown flow/version extensions are retained without interpretation."]})
     return {"decoder": {"id": "mitmproxy-native-tnetstring", "version": PROFILE}, "container": {"reported": None, "numeric_literals": [], "redactions": [], "records_pointer": None}, "total_records": len(records), "records": records}
+
+
+def failure_reply(error):
+    """Keep producer constraints, resource exhaustion and adapter defects distinct."""
+    if isinstance(error, CaptureFailure):
+        return {"ok": False, "reason": error.reason, "message": str(error), "pointer": error.pointer}
+    if isinstance(error, MemoryError):
+        return {"ok": False, "reason": "resource-limit", "message": "Native decoder exhausted its 768 MiB address-space budget.", "pointer": ""}
+    return {"ok": False, "reason": "decoder", "message": "Offline native decoder failed unexpectedly: " + type(error).__name__ + ".", "pointer": ""}
 
 
 class OfflineCapture:
@@ -162,12 +173,13 @@ class OfflineCapture:
         request = json.loads(Path(ctx.options.rea_request_path).read_text(encoding="utf-8"))
         try:
             response = {"ok": True, "value": decode(request)}
-        except CaptureFailure as error:
-            response = {"ok": False, "reason": error.reason, "message": str(error), "pointer": error.pointer}
         except Exception as error:
-            response = {"ok": False, "reason": "format", "message": "Offline native decoder failed: " + type(error).__name__ + ".", "pointer": ""}
+            response = failure_reply(error)
         try:
-            output = json.dumps(response, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("ascii")
+            try:
+                output = json.dumps(response, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("ascii")
+            except Exception as error:
+                output = json.dumps(failure_reply(error), separators=(",", ":")).encode("ascii")
             if len(output) > OUTPUT_BYTES:
                 output = b'{"ok":false,"reason":"limit","message":"Native reply exceeds the complete-evidence output budget.","pointer":""}'
             Path(request["reply_path"]).write_bytes(output)

@@ -35,7 +35,7 @@ export const decodeHarCapture = (
   } catch (cause: unknown) {
     if (cause instanceof RangeError)
       throw new CaptureFormatError(
-        "limit",
+        "input-limit",
         "HAR exceeds the decoder's recursion budget.",
       );
     throw new CaptureFormatError(
@@ -103,7 +103,7 @@ const projectHar = (
   ): JsonValue => {
     if (depth > WEB_NETWORK_CAPTURE_LIMITS.depth)
       throw new CaptureFormatError(
-        "limit",
+        "input-limit",
         "HAR exceeds the 64-level complete-evidence nesting budget.",
         pointer,
       );

@@ -41,7 +41,14 @@ const replySchema = z.discriminatedUnion("ok", [
   z.strictObject({ ok: z.literal(true), value: decodedSchema }),
   z.strictObject({
     ok: z.literal(false),
-    reason: z.enum(["format", "unsupported", "limit"]),
+    reason: z.enum([
+      "format",
+      "unsupported",
+      "input-limit",
+      "resource-limit",
+      "decoder",
+      "limit",
+    ]),
     message: z.string(),
     pointer: z.string(),
   }),
@@ -141,6 +148,26 @@ export class HistoricalCaptureDecoder {
               message: reply.message,
             },
           ]);
+        if (reply.reason === "input-limit")
+          throw new AnalysisInputError(OPERATION, undefined, [
+            {
+              path: ["capture_path", reply.pointer],
+              reason: "out_of_range",
+              message: reply.message,
+              expected: {
+                maximum_capture_nesting: WEB_NETWORK_CAPTURE_LIMITS.depth,
+              },
+            },
+          ]);
+        if (reply.reason === "decoder" || reply.reason === "resource-limit")
+          throw new ProviderAdapterError(input.format, OPERATION, {
+            diagnostics: {
+              phase: "decoder",
+              failure_kind: reply.reason,
+              reason: reply.message,
+              pointer: reply.pointer,
+            },
+          });
         if (reply.reason === "unsupported")
           throw new AnalysisCapabilityUnavailableError(
             input.format,

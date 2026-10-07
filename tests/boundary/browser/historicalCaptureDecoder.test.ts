@@ -216,3 +216,83 @@ it("cancels after snapshot acquisition before launch and removes private input d
     throw new Error("Private root was not acquired");
   await expect(access(privatePath)).rejects.toMatchObject({ code: "ENOENT" });
 });
+
+it.each([
+  { reason: "input-limit", tag: "AnalysisInputError" },
+  { reason: "resource-limit", tag: "ProviderAdapterError" },
+  { reason: "decoder", tag: "ProviderAdapterError" },
+  { reason: "limit", tag: "AnalysisOutputError" },
+])(
+  "preserves $reason decoder failures through the public error boundary",
+  async ({ reason, tag }) => {
+    const root = await mkdtemp(join(tmpdir(), "rea-historical-reply-"));
+    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    const path = join(root, "input.har");
+    await writeFile(path, JSON.stringify(historicalHar()));
+    let privatePath: string | undefined;
+    const decoder = new HistoricalCaptureDecoder(
+      [
+        {
+          format: "har",
+          identity: HAR_CAPTURE_PROVIDER_IDENTITY,
+          command: async (_, runtimePath) => {
+            privatePath = runtimePath;
+            await writeFile(
+              join(runtimePath, "reply.json"),
+              JSON.stringify({
+                ok: false,
+                reason,
+                message: "Specific decoder constraint",
+                pointer: "/extension/child",
+              }),
+            );
+            return {
+              command: process.execPath,
+              arguments: ["-e", "process.exit(0)"],
+            };
+          },
+        },
+      ],
+      process.env,
+    );
+    const result = await decoder.inspect(
+      inspectWebNetworkCaptureInputSchema.parse({
+        capture_path: path,
+        format: "har",
+      }),
+    );
+    if (result.ok) throw new Error("Failure required");
+    expect(result.error._tag).toBe(tag);
+    const projected = projectAnalysisError(result.error);
+    if (reason === "input-limit") {
+      expect(projected).toMatchObject({
+        category: "invalid_input",
+        details: {
+          issues: [
+            {
+              path: ["capture_path", "/extension/child"],
+              reason: "out_of_range",
+              expected: {
+                maximum_capture_nesting: WEB_NETWORK_CAPTURE_LIMITS.depth,
+              },
+            },
+          ],
+        },
+      });
+    } else if (tag === "ProviderAdapterError") {
+      expect(projected).toMatchObject({
+        details: {
+          diagnostics: {
+            phase: "decoder",
+            reason: "Specific decoder constraint",
+            failure_kind: reason,
+            pointer: "/extension/child",
+          },
+        },
+      });
+    }
+    if (privatePath === undefined)
+      throw new Error("Private root was not acquired");
+    await expect(access(privatePath)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);

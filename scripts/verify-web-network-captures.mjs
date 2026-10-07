@@ -9,7 +9,7 @@ import {
   truncate,
   writeFile,
 } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
@@ -62,6 +62,8 @@ try {
         `confdir=${join(runtime.path, "config")}`,
         "--set",
         `rea_fixture_root=${runtime.path}`,
+        "--set",
+        `rea_adapter_path=${resolve(dirname(entrypoint), "../bridge/mitmproxy/capture.py")}`,
         "-s",
         fileURLToPath(
           new URL("./fixtures/generate-mitmproxy-capture.py", import.meta.url),
@@ -72,6 +74,15 @@ try {
       hostEnvironment: environment,
     },
     { timeoutMs: 30_000, diagnosticBytes: 1024 * 1024 },
+  );
+  assert.deepEqual(
+    JSON.parse(
+      await readFile(
+        join(runtime.path, "native-error-classifications.json"),
+        "utf8",
+      ),
+    ),
+    { passed: 5 },
   );
   await client.connect(transport);
   for (const format of ["har", "mitmproxy"]) {
@@ -284,6 +295,28 @@ try {
       );
       cases++;
     }
+    for (const format of ["har", "mitmproxy"]) {
+      const failure = await inspect(
+        mode,
+        {
+          capture_path: join(
+            runtime.path,
+            format === "har" ? "deep.har" : "deep.mitm",
+          ),
+          format,
+        },
+        "invalid_input",
+      );
+      const issue = failure.details.issues[0];
+      assert.equal(issue.reason, "out_of_range");
+      assert.equal(issue.path[0], "capture_path");
+      assert.match(issue.path[1], /^\/_extension\/child/);
+      assert.equal(
+        issue.expected.maximum_capture_nesting,
+        WEB_NETWORK_CAPTURE_LIMITS.depth,
+      );
+      cases++;
+    }
     const value = await inspect(mode, {
       capture_path: privatePath,
       format: "har",
@@ -399,6 +432,7 @@ console.log(
       status: "passed",
       public_cases: cases,
       upstream: "mitmproxy 12.2.3 FlowWriter + SaveHar",
+      native_failure_classifications: 5,
       offline: true,
       verifier,
     },
