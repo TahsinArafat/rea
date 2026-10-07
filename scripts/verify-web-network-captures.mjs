@@ -82,7 +82,7 @@ try {
         "utf8",
       ),
     ),
-    { passed: 5 },
+    { passed: 7 },
   );
   await client.connect(transport);
   for (const format of ["har", "mitmproxy"]) {
@@ -323,7 +323,7 @@ try {
         capture_path: join(runtime.path, "invalid-credential-key.mitm"),
         format: "mitmproxy",
       },
-      "unsupported_provider",
+      "invalid_input",
     );
     cases++;
     const credentialDepth = await inspect(
@@ -375,7 +375,7 @@ try {
         format: "mitmproxy",
         sensitive_values: ["private-property"],
       },
-      "unsupported_provider",
+      "invalid_input",
     );
     cases++;
   }
@@ -455,7 +455,7 @@ console.log(
       status: "passed",
       public_cases: cases,
       upstream: "mitmproxy 12.2.3 FlowWriter + SaveHar",
-      native_failure_classifications: 5,
+      native_failure_classifications: 7,
       offline: true,
       verifier,
     },

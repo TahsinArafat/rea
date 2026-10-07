@@ -28,7 +28,15 @@ class Generator:
             reply = adapter.failure_reply(error)
             assert reply["reason"] == expected, reply
             assert "payload must not enter diagnostics" not in json.dumps(reply)
-        (root / "native-error-classifications.json").write_text(json.dumps({"passed": len(classifications)}))
+        for state, expected in [({"metadata": {1: b"bad-key"}}, "format"), ({"metadata": object()}, "decoder")]:
+            try:
+                adapter.project_record(state, [])
+            except adapter.CaptureFailure as error:
+                assert error.reason == expected, (error.reason, expected)
+                assert error.pointer == "/metadata", error.pointer
+            else:
+                raise AssertionError("Invalid native representation was accepted")
+        (root / "native-error-classifications.json").write_text(json.dumps({"passed": len(classifications) + 2}))
         first = http.HTTPFlow(connection.Client(peername=("127.0.0.1", 1), sockname=("127.0.0.1", 2)), connection.Server(address=("example.test", 80)))
         first.id = "original-producer-id"
         first.request = http.Request.make("POST", "http://example.test/a?token=ordinary", b"\x00\xffbody", [(b"Authorization", b"Bearer native-transport-secret"), (b"X-Duplicate", b"one"), (b"X-Duplicate", b"two")])
