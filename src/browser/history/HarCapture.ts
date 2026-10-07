@@ -173,10 +173,22 @@ const projectHar = (
       );
     if (captureObject(item))
       return Object.fromEntries(
-        Object.entries(item).map(([key, child]) => [
-          key,
-          visit(child, capturePointer(pointer, key), depth + 1, item),
-        ]),
+        Object.entries(item).flatMap(([key, child]) => {
+          if (
+            redact &&
+            sensitiveValues.some((literal) => key.includes(literal))
+          ) {
+            redactor.redactions.push({
+              pointer,
+              reason: "explicit-sensitive-value",
+              scope: "property-name",
+            });
+            return [];
+          }
+          return [
+            [key, visit(child, capturePointer(pointer, key), depth + 1, item)],
+          ];
+        }),
       );
     throw new CaptureFormatError(
       "format",

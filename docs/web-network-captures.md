@@ -85,7 +85,15 @@ Evidence parameters; the count is retained. Explicit text/UTF-8 byte matches
 exclude the entire field with a reported `null` rather than substitute a text
 marker or rewrite payload bytes. This prevents replacement markers from
 reintroducing declared literals. The file digest still
-identifies the original artifact. Header/cookie authentication values and known
+identifies the original artifact. A sensitive property name excludes that
+entire property and its sidecars; a `scope: "property-name"` redaction points
+to its actual parent. No substitute property name or child pointer is invented.
+Omitted native subtrees are still validated. Explicitly sensitive artifact
+paths are empty in Evidence and omitted from locations, while the original
+SHA-256 and size remain available. Failure messages, diagnostics and cleanup
+resources follow the same explicit declarations without changing error types;
+sensitive issue pointers identify a real ancestor instead of a fabricated
+coordinate. Header/cookie authentication values and known
 transport URL userinfo are excluded structurally, including native backups.
 
 Historical evidence does not prove runtime attribution, execution or deployment
@@ -101,7 +109,9 @@ budget. Exceeding a budget returns no partial success. HAR runs in an owned
 192 MiB Node old-generation heap with one V8 worker. Native decoding applies
 Linux limits of 768 MiB address space, 30 seconds CPU and 96 MiB file output;
 both commands have a 30-second wall deadline and independently supervised
-process cleanup. Heap limits alone do not establish aggregate RSS limits.
+process cleanup. Owned decoder diagnostics retain at most 1 MiB across stdout
+and stderr; the collector drops overflow as it arrives, reports the limit
+failure and verifies cleanup. Heap limits alone do not establish aggregate RSS limits.
 
 Stable regular-file reads reject symlinks, replacement and concurrent changes.
 Private snapshots, declarations and tool configuration are removed before the

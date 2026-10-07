@@ -4,6 +4,47 @@ import { historicalHar } from "../../tests/fixtures/historicalHar.js";
 import { ok } from "../domain/result.js";
 import type { WebNetworkCapture } from "../domain/webNetworkCapture.js";
 
+it.each(["REDACTED", "[", "]", "/capture.har"])(
+  "excludes sensitive path text even when a replacement marker would collide: %s",
+  async (literal) => {
+    const report = fixture();
+    report.artifact.path = `/capture.har/${literal}`;
+    const result = await new WebNetworkCaptureService({
+      inspect: () => Promise.resolve(ok(report)),
+    }).inspect({
+      capture_path: report.artifact.path,
+      format: "har",
+      sensitive_values: [literal],
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.subject?.local_path).not.toContain(literal);
+    expect(result.value.parameters.capture_path).not.toContain(literal);
+    expect(
+      result.value.locations.every(
+        (location) =>
+          location.kind !== "artifact-path" || !location.path.includes(literal),
+      ),
+    ).toBe(true);
+    expect(result.value.subject?.digest.sha256).toBe(report.artifact.sha256);
+  },
+);
+
+it("keeps observed artifact identity when the entire sensitive path is excluded", async () => {
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(fixture())),
+  }).inspect({
+    capture_path: "/capture.har",
+    format: "har",
+    sensitive_values: ["/", "[", "REDACTED"],
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.subject).toMatchObject({
+    local_path: "",
+    digest: { sha256: "a".repeat(64) },
+  });
+  expect(result.value.locations).toEqual([]);
+});
+
 const fixture = (): WebNetworkCapture => ({
   decoder: { id: "test-historical-port", version: "1" },
   container: {
@@ -80,5 +121,5 @@ it("applies an explicit sensitive path literal after verifying the selected arti
   });
   if (!result.ok) throw result.error;
   expect(JSON.stringify(result.value)).not.toContain("capture.har");
-  expect(result.value.parameters.capture_path).toBe("/[REDACTED]");
+  expect(result.value.parameters.capture_path).toBe("");
 });

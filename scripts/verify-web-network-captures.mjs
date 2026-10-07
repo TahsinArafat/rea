@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, copyFile, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -223,6 +223,72 @@ try {
       cases++;
     }
   }
+  for (const format of ["har", "mitmproxy"]) {
+    for (const mode of ["cli", "mcp"]) {
+      const value = await inspect(mode, {
+        capture_path: join(
+          runtime.path,
+          format === "har" ? "producer.har" : "string-urls.mitm",
+        ),
+        format,
+        sensitive_values: ["private-property"],
+      });
+      const record = value.records[0];
+      const properties =
+        format === "har"
+          ? record.reported._private_properties
+          : record.reported.metadata._private_properties;
+      assert.deepEqual(properties, { kept: 7 });
+      assert.ok(!JSON.stringify(value).includes("private-property"));
+      assert.ok(
+        record.redactions.some(
+          (item) =>
+            item.scope === "property-name" &&
+            item.pointer ===
+              (format === "har"
+                ? "/_private_properties"
+                : "/metadata/_private_properties"),
+        ),
+      );
+      if (format === "mitmproxy")
+        assert.deepEqual(record.reported.backup.metadata._private_properties, {
+          kept: 7,
+        });
+      cases++;
+    }
+  }
+  const privatePath = join(runtime.path, "REDACTED.har");
+  await copyFile(join(runtime.path, "producer.har"), privatePath);
+  for (const mode of ["cli", "mcp"]) {
+    const value = await inspect(mode, {
+      capture_path: privatePath,
+      format: "har",
+      sensitive_values: ["REDACTED", "["],
+    });
+    assert.equal(value.artifact.path, "");
+    assert.ok(!JSON.stringify(value).includes("REDACTED"));
+    cases++;
+    await inspect(
+      mode,
+      {
+        capture_path: join(runtime.path, "private-property-absent.har"),
+        format: "har",
+        sensitive_values: ["private-property", "REDACTED"],
+      },
+      "invalid_input",
+    );
+    cases++;
+    await inspect(
+      mode,
+      {
+        capture_path: join(runtime.path, "invalid-private-key.mitm"),
+        format: "mitmproxy",
+        sensitive_values: ["private-property"],
+      },
+      "unsupported_provider",
+    );
+    cases++;
+  }
   for (const mode of ["cli", "mcp"]) {
     const value = await inspect(mode, {
       capture_path: join(runtime.path, "flows.mitm"),
@@ -317,6 +383,8 @@ async function inspect(mode, input, errorCategory) {
     if (errorCategory !== undefined) {
       assert.equal(result.isError, true);
       assert.equal(value.error.category, errorCategory);
+      for (const literal of input.sensitive_values ?? [])
+        assert.ok(!JSON.stringify(value.error).includes(literal));
       return null;
     }
     assert.notEqual(result.isError, true, mcpTextValue(result));
@@ -352,7 +420,10 @@ async function inspect(mode, input, errorCategory) {
   } catch (cause) {
     if (errorCategory === undefined) throw cause;
     assert.equal(typeof cause.code, "number");
-    assert.equal(JSON.parse(cause.stdout).category, errorCategory);
+    const value = JSON.parse(cause.stdout);
+    assert.equal(value.category, errorCategory);
+    for (const literal of input.sensitive_values ?? [])
+      assert.ok(!JSON.stringify(value).includes(literal));
     return null;
   }
 }

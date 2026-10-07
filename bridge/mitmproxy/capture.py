@@ -111,6 +111,16 @@ def project_record(state, secrets):
             for key, item in value.items():
                 if not isinstance(key, str):
                     raise CaptureFailure("unsupported", "Native record has a non-string dictionary key.", path)
+                if any(secret in key for secret in secrets):
+                    # Validate the omitted subtree too, then discard all of its
+                    # coordinates rather than inventing a replacement identity.
+                    before = len(binaries), len(numbers), len(redactions)
+                    visit(item, pointer(path, key), depth + 1)
+                    del binaries[before[0]:]
+                    del numbers[before[1]:]
+                    del redactions[before[2]:]
+                    redactions.append({"pointer": path, "reason": "explicit-sensitive-value", "scope": "property-name"})
+                    continue
                 result[key] = visit(item, pointer(path, key), depth + 1)
             return result
         raise CaptureFailure("unsupported", "Native parser returned an unsupported value type.", path)

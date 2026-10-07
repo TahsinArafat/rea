@@ -34,10 +34,21 @@ export const inspectWebNetworkCaptureInputSchema = z.strictObject({
 const pointerSchema = z
   .string()
   .describe("RFC 6901 pointer in the producer's reported object.");
-const redactionSchema = z.strictObject({
-  pointer: pointerSchema,
-  reason: z.enum(["transport-credential", "explicit-sensitive-value"]),
-});
+const redactionSchema = z.union([
+  z.strictObject({
+    pointer: pointerSchema,
+    reason: z.enum(["transport-credential", "explicit-sensitive-value"]),
+  }),
+  z.strictObject({
+    pointer: pointerSchema,
+    reason: z.literal("explicit-sensitive-value"),
+    scope: z
+      .literal("property-name")
+      .describe(
+        "An omitted property name; pointer identifies its actual parent, not an invented child coordinate.",
+      ),
+  }),
+]);
 const binaryBase = {
   pointer: pointerSchema,
   representation: z.enum(["producer-bytes", "har-base64-content"]),
@@ -85,7 +96,11 @@ export const webNetworkCaptureRecordSchema = z.strictObject({
 /** Historical capture inspection has file identity, producer provenance and explicit unknowns. */
 export const webNetworkCaptureSchema = z.strictObject({
   artifact: z.strictObject({
-    path: z.string().min(1),
+    path: z
+      .string()
+      .describe(
+        "Selected artifact path; empty when explicitly excluded from Evidence.",
+      ),
     sha256: z.string().regex(/^[0-9a-f]{64}$/),
     bytes: z.number().int().nonnegative(),
   }),

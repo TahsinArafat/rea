@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { expect, it } from "vitest";
-import { runOwnedCommand } from "../../../src/process/OwnedCommand.js";
+import {
+  OwnedCommandFailure,
+  runOwnedCommand,
+} from "../../../src/process/OwnedCommand.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
@@ -9,6 +12,25 @@ const command = (script: string) => ({
   command: process.execPath,
   arguments: ["-e", script],
   runId: `rea-owned-command-test-${randomUUID()}`,
+});
+
+it("bounds retained diagnostics across both streams during a real output burst", async () => {
+  try {
+    await runOwnedCommand(
+      command(
+        'process.stdout.write("a".repeat(256 * 1024)); process.stderr.write("b".repeat(256 * 1024))',
+      ),
+      { timeoutMs: 2_000, diagnosticBytes: 1024 },
+    );
+    throw new Error("An oversized producer must fail");
+  } catch (cause: unknown) {
+    if (!(cause instanceof OwnedCommandFailure)) throw cause;
+    expect(cause.reason).toBe("output-limit");
+    expect(cause.snapshot).not.toBeNull();
+    expect(
+      (cause.snapshot?.stdout.bytes ?? 0) + (cause.snapshot?.stderr.bytes ?? 0),
+    ).toBeLessThanOrEqual(1024);
+  }
 });
 
 it("collects a real owned command and verifies its exit before returning diagnostics", async () => {

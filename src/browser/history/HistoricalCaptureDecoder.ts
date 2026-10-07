@@ -28,6 +28,7 @@ import {
   runOwnedCommand,
 } from "../../process/OwnedCommand.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
+import { redactCaptureFailure } from "./CaptureDiagnostics.js";
 
 const OPERATION = "inspect_web_network_capture";
 const decodedSchema = webNetworkCaptureSchema.omit({
@@ -171,22 +172,30 @@ export class HistoricalCaptureDecoder {
         ],
       });
     } catch (cause: unknown) {
-      result = err(captureFailure(input, cause, options));
+      result = err(
+        redactCaptureFailure(
+          captureFailure(input, cause, options),
+          input.sensitive_values,
+        ),
+      );
     }
     if (runtime !== undefined) {
       try {
         await runtime.close();
       } catch (cause: unknown) {
         return err(
-          new ProviderCleanupError(
-            input.format,
-            [runtime.path],
-            {
-              capture_path: input.capture_path,
-              previous_error: result.ok ? null : result.error.message,
-              reason: cause instanceof Error ? cause.message : String(cause),
-            },
-            { operation: OPERATION },
+          redactCaptureFailure(
+            new ProviderCleanupError(
+              input.format,
+              [runtime.path],
+              {
+                capture_path: input.capture_path,
+                previous_error: result.ok ? null : result.error.message,
+                reason: cause instanceof Error ? cause.message : String(cause),
+              },
+              { operation: OPERATION },
+            ),
+            input.sensitive_values,
           ),
         );
       }

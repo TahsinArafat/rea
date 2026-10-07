@@ -2,6 +2,35 @@ import { expect, it } from "vitest";
 import { historicalHar } from "../../../tests/fixtures/historicalHar.js";
 import { decodeHarCapture } from "./HarCapture.js";
 
+it("excludes sensitive property identities before emitting keys and sidecar coordinates", () => {
+  const fixture = historicalHar();
+  const first = fixture.log.entries[0];
+  if (first === undefined) throw new Error("fixture missing");
+  const result = decodeHarCapture(
+    JSON.stringify({
+      ...fixture,
+      _extension: {
+        "api-secret/~": { numeric: 123, text: "api-secret" },
+        kept: 7,
+      },
+      log: { ...fixture.log, entries: [{ ...first, "api-secret": 42 }] },
+    }),
+    ["api-secret"],
+  );
+  expect(JSON.stringify(result)).not.toContain("api-secret");
+  expect(result.container.reported).toMatchObject({ _extension: { kept: 7 } });
+  expect(result.container.redactions).toContainEqual({
+    pointer: "/_extension",
+    reason: "explicit-sensitive-value",
+    scope: "property-name",
+  });
+  expect(result.records[0]?.redactions).toContainEqual({
+    pointer: "",
+    reason: "explicit-sensitive-value",
+    scope: "property-name",
+  });
+});
+
 it.each([
   { value: "REDACTED", sensitive: ["REDACTED"] },
   { value: "literal[", sensitive: ["["] },

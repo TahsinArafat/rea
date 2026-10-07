@@ -37,6 +37,7 @@ class Generator:
         markers = {"sensitive": "REDACTED", "bracket": "literal[", "overlap": "secret", "ordinary": "unmarked"}
         har = SaveHar().make_har([har_first, har_second])
         har["log"]["entries"][0]["_markers"] = markers
+        har["log"]["entries"][0]["_private_properties"] = {"private-property/~": {"number": 123, "text": "private-property"}, "kept": 7}
         (root / "producer.har").write_text(json.dumps(har))
         strings = first.get_state()
         for state in [strings, strings["backup"]]:
@@ -45,7 +46,11 @@ class Generator:
             state["request"]["headers"] = [(b"Referer", "https://referer-user:referer-password@example.test/from"), (b"Origin", "//origin-user:origin-password@example.test")]
             state["response"]["headers"] = [(b"Location", "https://location-user:location-password@example.test/to")]
             state["metadata"]["_markers"] = dict(markers)
+            state["metadata"]["_private_properties"] = {"private-property/~": {"number": 123, "bytes": b"private-property"}, "kept": 7}
         with (root / "string-urls.mitm").open("wb") as handle:
+            tnetstring.dump(strings, handle)
+        strings["metadata"]["_private_properties"]["private-property/~"] = {1: b"unsupported-key"}
+        with (root / "invalid-private-key.mitm").open("wb") as handle:
             tnetstring.dump(strings, handle)
         (root / "oracle.json").write_text(json.dumps({"records": 2, "request_base64": "AP9ib2R5", "response_base64": "AP5hbnN3ZXI=", "websocket_base64": "AP1tZXNzYWdl", "id": first.id}))
         ctx.master.shutdown()

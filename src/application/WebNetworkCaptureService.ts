@@ -8,7 +8,6 @@ import {
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
-import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -105,10 +104,18 @@ export class WebNetworkCaptureService {
         );
       records.push(record);
     }
-    const safePath = redactExplicitText(
-      input.capture_path,
-      input.sensitive_values,
-    );
+    const safePath = input.sensitive_values.some((literal) =>
+      input.capture_path.includes(literal),
+    )
+      ? ""
+      : input.capture_path;
+    const limitations =
+      safePath === ""
+        ? [
+            ...value.limitations,
+            "The explicitly sensitive artifact path is excluded; its observed SHA-256 and size remain available.",
+          ]
+        : value.limitations;
     const parameters = jsonObjectSchema.parse({
       capture_path: safePath,
       format: input.format,
@@ -134,11 +141,13 @@ export class WebNetworkCaptureService {
             ...value,
             artifact: { ...value.artifact, path: safePath },
             records,
+            limitations,
           },
           confidence: "observed",
           authority: "historical-reference",
-          limitations: value.limitations,
-          locations: [{ kind: "artifact-path", path: safePath }],
+          limitations,
+          locations:
+            safePath === "" ? [] : [{ kind: "artifact-path", path: safePath }],
         },
       ),
     );

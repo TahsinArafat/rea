@@ -229,7 +229,7 @@ export const createEvidence = (
     target === undefined
       ? null
       : {
-          name: target.path.split("/").at(-1) ?? target.path,
+          name: target.path.split("/").at(-1) || "artifact",
           digest: { sha256: target.sha256 },
           format: target.format,
           architecture: target.architecture ?? null,

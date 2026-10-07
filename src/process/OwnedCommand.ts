@@ -52,11 +52,9 @@ export const runOwnedCommand = async (
         (() => cleanupOwnedProcessGroup(launched.ownership)),
     },
     {
+      maxDiagnosticBytes: limits.diagnosticBytes,
       onDiagnostic: (event) => {
-        if (
-          event.type === "output" &&
-          event.totalBytes > limits.diagnosticBytes
-        )
+        if (event.type === "output" && event.truncated === true)
           exceeded = true;
         if (event.type === "error") processFailure = event.message;
       },
@@ -138,7 +136,15 @@ export const runOwnedCommand = async (
         `process-group:${launched.ownership.processGroupId}`,
       ],
     );
-  if (failure !== undefined) throw failure;
+  if (failure !== undefined)
+    throw new OwnedCommandFailure(
+      failure.reason,
+      failure.message,
+      snapshot,
+      failure.cleanupFailure,
+      { cause: failure },
+      failure.resources,
+    );
   if (options.signal?.aborted)
     throw new OwnedCommandFailure("cancelled", "Command cancelled.", snapshot);
   return snapshot;
