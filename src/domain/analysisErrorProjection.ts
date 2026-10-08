@@ -7,11 +7,15 @@ import {
   assertKnownAnalysisErrorTag,
 } from "./analysisErrorPresentation.js";
 import {
+  AnalysisAccessDeniedError,
+  AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
+  AnalysisUnsupportedTargetError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisTimeoutError,
+  AnalysisResourceConstraintError,
 } from "./analysisErrorCore.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
 import { BinaryTargetError } from "./configurationErrors.js";
@@ -37,7 +41,11 @@ export const projectAnalysisError = (
 ): AnalysisErrorProjection => {
   assertKnownAnalysisErrorTag(error._tag);
   const code = errorCode(error);
-  const details = errorDetails(error);
+  const primaryDetails = errorDetails(error);
+  const details =
+    error.capturedOutput === undefined
+      ? primaryDetails
+      : { ...primaryDetails, captured_output: { ...error.capturedOutput } };
   return {
     code,
     category: analysisErrorCategory(error),
@@ -130,10 +138,14 @@ const STATIC_ERROR_CODES = {
   AnalysisOutputError: "unreadable_output",
   HopperProtocolError: "unreadable_output",
   AnalysisInputError: "invalid_request",
+  AnalysisAccessDeniedError: "access_denied",
+  AnalysisArtifactChangedError: "artifact_changed",
   AnalysisCapabilityUnavailableError: "capability_unavailable",
+  AnalysisUnsupportedTargetError: "unsupported_target",
   AnalysisCancelledError: "cancelled",
   HopperCancelledError: "cancelled",
   AnalysisTimeoutError: "provider_timeout",
+  AnalysisResourceConstraintError: "resource_constraint",
   HopperTimeoutError: "provider_timeout",
   HopperProcessError: "provider_unavailable",
   HopperStartError: "provider_unavailable",
@@ -177,6 +189,33 @@ const errorDetails = (
 const requestErrorDetails = (
   error: AnalysisError,
 ): Readonly<Record<string, JsonValue>> | undefined => {
+  if (error instanceof AnalysisUnsupportedTargetError)
+    return {
+      operation: error.operation,
+      path: error.path,
+      reason: error.reason,
+    };
+  if (error instanceof AnalysisResourceConstraintError)
+    return {
+      operation: error.operation,
+      resource: error.resource,
+      reason: error.reason,
+      reported_limits: error.reportedLimits,
+    };
+  if (error instanceof AnalysisArtifactChangedError)
+    return {
+      operation: error.operation,
+      path: error.path,
+      reason: error.reason,
+      boundary: "stable-artifact-read",
+    };
+  if (error instanceof AnalysisAccessDeniedError)
+    return {
+      operation: error.operation,
+      path: error.path,
+      system_code: error.systemCode,
+      boundary: "filesystem-read",
+    };
   if (error instanceof AnalysisOutputError)
     return { operation: error.operation, reason: error.reason };
   if (error instanceof AnalysisInputError && error.issues.length > 0)
@@ -220,7 +259,11 @@ const artifactStateErrorDetails = (
     };
   if (error instanceof UnknownRegistryError) return { reason: error.reason };
   if (error instanceof EvidenceFileError)
-    return { operation: error.operation, reason: error.reason };
+    return {
+      operation: error.operation,
+      reason: error.reason,
+      ...(error.path === undefined ? {} : { path: error.path }),
+    };
   return undefined;
 };
 
@@ -372,6 +415,7 @@ const lifecycleErrorDetails = (
 };
 
 const RETRYABLE_CODES: ReadonlySet<AnalysisErrorProjection["code"]> = new Set([
+  "artifact_changed",
   "invalid_request",
   "provider_timeout",
   "cancelled",
@@ -384,10 +428,14 @@ export interface AnalysisErrorProjection extends Readonly<
 > {
   readonly code:
     | "invalid_request"
+    | "access_denied"
+    | "artifact_changed"
     | "unreadable_output"
     | "capability_unavailable"
+    | "unsupported_target"
     | "provider_unavailable"
     | "provider_timeout"
+    | "resource_constraint"
     | "cancelled"
     | "artifact_integrity_mismatch"
     | "artifact_operation_failed"
@@ -402,10 +450,12 @@ export interface AnalysisErrorProjection extends Readonly<
   readonly category:
     | "invalid_input"
     | "unsupported_provider"
+    | "unsupported_target"
     | "integrity_mismatch"
     | "truncated"
     | "cancelled"
     | "timeout"
+    | "resource_constraint"
     | "unavailable"
     | "execution_failure";
   readonly message: string;

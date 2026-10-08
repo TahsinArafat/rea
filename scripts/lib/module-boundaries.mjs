@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const PURE_LAYERS = new Set(["domain", "contracts"]);
 const MIGRATED_PROVIDER_ROOTS = new Set([
+  "evm",
   "android",
   "firmware",
   "ghidra",
@@ -78,6 +79,8 @@ const failedBoundary = (file, target) => {
   if (
     (file.startsWith("src/artifacts/javascript/") ||
       file.startsWith("src/artifacts/apple/") ||
+      file.startsWith("src/artifacts/inventory/") ||
+      file.startsWith("src/artifacts/extraction/") ||
       /^src\/artifacts\/ArtifactHash\.(?:js|ts)$/u.test(file)) &&
     (["application", "composition", "server", "cli", "main"].includes(
       targetLayer,
